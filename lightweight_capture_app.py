@@ -10,6 +10,9 @@ import json
 import time
 import psutil
 import threading
+import signal
+import sys
+import atexit
 import queue
 from datetime import datetime
 from pathlib import Path
@@ -35,32 +38,124 @@ class ProductCaptureSystem:
         self.session_thread = None
         self.capture_rate = 24  # captures per minute
         self.session_duration = 0
+        
+        # Register cleanup handlers
+        atexit.register(self.cleanup)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        print(f"\nReceived signal {signum}, shutting down gracefully...")
+        self.cleanup()
+        sys.exit(0)
+    
+    def cleanup(self):
+        """Clean up resources properly"""
+        print("Cleaning up resources...")
+        
+        # Stop any active session
+        if self.session_active:
+            self.session_active = False
+            if self.session_thread and self.session_thread.is_alive():
+                self.session_thread.join(timeout=2)
+        
+        # Release camera resources
+        if self.camera:
+            try:
+                self.camera.release()
+                print("Camera released successfully")
+            except Exception as e:
+                print(f"Error releasing camera: {e}")
+            finally:
+                self.camera = None
+        
+        # Destroy any OpenCV windows
+        try:
+            cv2.destroyAllWindows()
+        except Exception as e:
+            print(f"Error destroying OpenCV windows: {e}")
+        
+        print("Cleanup completed")
         self.session_captures = 0
         self.session_start_time = None
         
     def initialize_camera(self, camera_index=0):
-        """Initialize camera with high quality settings"""
+        """Initialize camera with high quality settings and robust error handling"""
         try:
             # Release existing camera if any
             if self.camera:
-                self.camera.release()
-                time.sleep(0.5)  # Give time for camera to release
+                try:
+                    self.camera.release()
+                    print("Previous camera released")
+                except Exception as e:
+                    print(f"Error releasing previous camera: {e}")
+                finally:
+                    self.camera = None
+                
+                # Wait longer for camera to fully release
+                time.sleep(1.0)
+                
+                # Destroy any OpenCV windows that might be holding resources
+                cv2.destroyAllWindows()
             
-            self.camera = cv2.VideoCapture(camera_index)
-            if not self.camera.isOpened():
-                return False
+            # Try to initialize camera with retries
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    print(f"Camera initialization attempt {attempt + 1}/{max_retries}")
+                    self.camera = cv2.VideoCapture(camera_index)
+                    
+                    if self.camera.isOpened():
+                        # Set high quality parameters
+                        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                        self.camera.set(cv2.CAP_PROP_FPS, 30)
+                        self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                        self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to prevent memory issues
+                        
+                        # Test frame capture to ensure camera is working
+                        ret, test_frame = self.camera.read()
+                        if ret and test_frame is not None:
+                            self.camera_index = camera_index
+                            print(f"Camera {camera_index} initialized successfully")
+                            return True
+                        else:
+                            print(f"Camera {camera_index} opened but cannot capture frames")
+                            self.camera.release()
+                            self.camera = None
+                    else:
+                        print(f"Camera {camera_index} failed to open")
+                        if self.camera:
+                            self.camera.release()
+                            self.camera = None
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(1.0)  # Wait before retry
+                        
+                except Exception as e:
+                    print(f"Camera initialization attempt {attempt + 1} failed: {e}")
+                    if self.camera:
+                        try:
+                            self.camera.release()
+                        except:
+                            pass
+                        self.camera = None
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(1.0)  # Wait before retry
             
-            # Set high quality parameters
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            self.camera.set(cv2.CAP_PROP_FPS, 30)
-            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to prevent memory issues
+            print(f"Failed to initialize camera {camera_index} after {max_retries} attempts")
+            return False
             
-            self.camera_index = camera_index
-            return True
         except Exception as e:
-            print(f"Camera initialization error: {e}")
+            print(f"Critical camera initialization error: {e}")
+            if self.camera:
+                try:
+                    self.camera.release()
+                except:
+                    pass
+                self.camera = None
             return False
     
     def get_frame(self):
@@ -234,23 +329,42 @@ class ProductCaptureSystem:
 capture_system = ProductCaptureSystem()
 
 def generate_frames():
-    """Generate camera frames for live preview"""
+    """Generate camera frames for live preview with better error handling"""
+    frame_count = 0
+    max_consecutive_failures = 10
+    consecutive_failures = 0
+    
     while True:
-        frame = capture_system.get_frame()
-        if frame is not None:
-            # Encode frame as JPEG
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            if ret:
-                frame_bytes = buffer.tobytes()
+        try:
+            frame = capture_system.get_frame()
+            if frame is not None:
+                consecutive_failures = 0  # Reset failure counter
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    consecutive_failures += 1
+            else:
+                consecutive_failures += 1
+                
+            # If too many consecutive failures, send placeholder and longer delay
+            if consecutive_failures >= max_consecutive_failures:
+                # Send placeholder frame if no camera
+                placeholder = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x11\x08\x00\xf0\x01@\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x14\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xaa\xff\xd9'
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        else:
-            # Send placeholder frame if no camera
-            placeholder = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x11\x08\x00\xf0\x01@\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x14\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xaa\xff\xd9'
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n')
-        
-        time.sleep(0.033)  # ~30 FPS
+                       b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n')
+                time.sleep(1.0)  # Longer delay when camera is not working
+                consecutive_failures = 0  # Reset after sending placeholder
+            else:
+                time.sleep(0.1)  # Slower frame rate to reduce camera stress
+                
+        except Exception as e:
+            print(f"Frame generation error: {e}")
+            consecutive_failures += 1
+            time.sleep(0.5)  # Wait before retry
 
 @app.route('/')
 def index():
@@ -263,13 +377,90 @@ def video_feed():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/api/camera/scan')
+def scan_cameras():
+    """Scan for available cameras excluding FaceTime"""
+    try:
+        cameras = []
+        
+        # Test camera indices 0-9 to find available cameras
+        for i in range(10):
+            try:
+                # Create a temporary camera object to test
+                test_camera = cv2.VideoCapture(i)
+                
+                if test_camera.isOpened():
+                    # Try to read a frame to verify it's working
+                    ret, frame = test_camera.read()
+                    if ret and frame is not None:
+                        # Get camera name/info if possible
+                        camera_name = f"Camera {i}"
+                        
+                        # Try to get more specific camera info
+                        width = test_camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+                        height = test_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                        
+                        if width > 0 and height > 0:
+                            camera_name = f"Camera {i} ({int(width)}x{int(height)})"
+                        
+                        # Check if it's likely a FaceTime camera (skip it)
+                        # FaceTime cameras often have specific resolutions or properties
+                        # This is a basic check - you might need to adjust based on your system
+                        if "facetime" not in camera_name.lower():
+                            cameras.append({
+                                'index': i,
+                                'name': camera_name,
+                                'width': int(width) if width > 0 else None,
+                                'height': int(height) if height > 0 else None
+                            })
+                
+                test_camera.release()
+                
+            except Exception as e:
+                print(f"Error testing camera {i}: {e}")
+                continue
+        
+        # Clean up any OpenCV windows
+        cv2.destroyAllWindows()
+        
+        return jsonify({
+            'success': True,
+            'cameras': cameras,
+            'message': f'Found {len(cameras)} available cameras'
+        })
+        
+    except Exception as e:
+        print(f"Camera scan error: {e}")
+        return jsonify({
+            'success': False,
+            'cameras': [],
+            'message': f'Error scanning cameras: {str(e)}'
+        })
+
 @app.route('/api/camera/init', methods=['POST'])
 def init_camera():
-    """Initialize camera"""
-    data = request.get_json()
-    camera_index = data.get('camera_index', 0)
-    success = capture_system.initialize_camera(camera_index)
-    return jsonify({'success': success})
+    """Initialize camera - avoid reinitialization to prevent segfaults"""
+    try:
+        # If camera is already initialized and working, don't reinitialize
+        if capture_system.camera and capture_system.camera.isOpened():
+            # Test if camera is actually working
+            ret, test_frame = capture_system.camera.read()
+            if ret and test_frame is not None:
+                return jsonify({'success': True, 'message': 'Camera already initialized and working'})
+        
+        # Only initialize if camera is not working
+        data = request.get_json() or {}
+        camera_index = data.get('camera_index', 0)
+        success = capture_system.initialize_camera(camera_index)
+        
+        if success:
+            return jsonify({'success': True, 'message': 'Camera initialized successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Camera initialization failed'})
+            
+    except Exception as e:
+        print(f"Camera init API error: {e}")
+        return jsonify({'success': False, 'message': f'Camera initialization error: {str(e)}'})
 
 @app.route('/api/capture', methods=['POST'])
 def capture_image():

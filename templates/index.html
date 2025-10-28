@@ -278,13 +278,16 @@
                 <!-- Camera Controls -->
                 <div class="control-group">
                     <h3>📷 Camera</h3>
+                    <div style="margin-bottom: 10px;">
+                        <button class="btn" onclick="scanCameras()">🔍 Scan Cameras</button>
+                    </div>
                     <select class="select-box" id="cameraSelect">
-                        <option value="0">Camera 0 (Default)</option>
-                        <option value="1">Camera 1</option>
-                        <option value="2">Camera 2</option>
+                        <option value="">Select a camera...</option>
                     </select>
-                    <button class="btn" onclick="initCamera()">Connect Camera</button>
-                    <button class="btn capture" onclick="captureImage()">📸 Capture Image</button>
+                    <div style="margin-top: 10px;">
+                        <button class="btn" onclick="initCamera()" id="connectCameraBtn" disabled>🔌 Connect Camera</button>
+                        <button class="btn capture" onclick="captureImage()">📸 Capture Image</button>
+                    </div>
                 </div>
 
                 <!-- Capture Session -->
@@ -464,8 +467,48 @@
             }, 2000);
         });
 
+        async function scanCameras() {
+            try {
+                const response = await fetch('/api/camera/scan');
+                const result = await response.json();
+                
+                const select = document.getElementById('cameraSelect');
+                const connectBtn = document.getElementById('connectCameraBtn');
+                
+                select.innerHTML = '<option value="">Select a camera...</option>';
+                
+                if (result.success && result.cameras.length > 0) {
+                    result.cameras.forEach(camera => {
+                        const option = document.createElement('option');
+                        option.value = camera.index;
+                        option.textContent = `${camera.name} (Index: ${camera.index})`;
+                        select.appendChild(option);
+                    });
+                    
+                    // Enable connect button when cameras are found
+                    select.addEventListener('change', function() {
+                        connectBtn.disabled = this.value === '';
+                    });
+                    
+                    alert(`Found ${result.cameras.length} camera(s). Please select one to connect.`);
+                } else {
+                    alert('No cameras found. Please check your camera connections.');
+                    connectBtn.disabled = true;
+                }
+            } catch (error) {
+                alert('Error scanning cameras: ' + error.message);
+                console.error('Camera scan error:', error);
+            }
+        }
+
         async function initCamera() {
             const cameraIndex = document.getElementById('cameraSelect').value;
+            
+            if (!cameraIndex) {
+                alert('Please select a camera first.');
+                return;
+            }
+            
             try {
                 const response = await fetch('/api/camera/init', {
                     method: 'POST',
@@ -478,7 +521,7 @@
                     updateStatus();
                     alert('Camera connected successfully!');
                 } else {
-                    alert('Failed to connect camera');
+                    alert('Failed to connect camera: ' + result.message);
                 }
             } catch (error) {
                 alert('Error connecting camera: ' + error.message);
