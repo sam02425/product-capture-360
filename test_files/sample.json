@@ -1,0 +1,43 @@
+{
+  "application": {
+    "name": "File Browser with Live Preview",
+    "version": "1.0.0",
+    "description": "A comprehensive file management system with real-time preview capabilities",
+    "author": "Assistant",
+    "created": "2024-10-28"
+  },
+  "features": [
+    {
+      "name": "Live Preview",
+      "description": "Real-time file preview for various file types",
+      "supported_types": ["images", "text", "data", "code"]
+    },
+    {
+      "name": "Navigation",
+      "description": "Hierarchical folder navigation system",
+      "capabilities": ["up/down traversal", "quick access", "breadcrumb path"]
+    },
+    {
+      "name": "File Operations",
+      "description": "Basic file system operations",
+      "operations": ["folder creation", "file selection", "permission handling"]
+    }
+  ],
+  "supported_formats": {
+    "images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"],
+    "text": [".txt", ".py", ".js", ".html", ".css", ".json", ".xml", ".md"],
+    "data": [".csv", ".xlsx", ".xls", ".json"]
+  },
+  "configuration": {
+    "auto_refresh": true,
+    "preview_enabled": true,
+    "max_preview_lines": 100,
+    "refresh_interval": 3
+  },
+  "statistics": {
+    "total_files_supported": 50,
+    "preview_types": 4,
+    "navigation_features": 6,
+    "error_handling_cases": 12
+  }
+}

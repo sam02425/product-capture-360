@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Capture System - Live Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+            height: calc(100vh - 200px);
+        }
+
+        .preview-section {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4444;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #44ff44;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .live-preview {
+            flex: 1;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            min-height: 400px;
+        }
+
+        .live-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .preview-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        .controls-section {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow-y: auto;
+        }
+
+        .control-group {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .control-group:last-child {
+            border-bottom: none;
+        }
+
+        .control-group h3 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn.capture {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            font-size: 16px;
+            padding: 15px 20px;
+        }
+
+        .btn.rotate {
+            background: linear-gradient(135deg, #feca57 0%, #ff9ff3 100%);
+        }
+
+        .select-box, .input-box {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .select-box:focus, .input-box:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .folder-browser {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .folder-item {
+            padding: 8px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .folder-item:hover {
+            background: #f0f0f0;
+        }
+
+        .folder-icon {
+            font-size: 16px;
+        }
+
+        .select-box, .input-box {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 8px;
+                margin-top: 20px;
+            }
+
+            .stats div {
+                margin-bottom: 8px;
+                font-size: 14px;
+            }
+
+        .stats strong {
+            color: #667eea;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Product Capture System</h1>
+            <p>Lightweight Python App with Live Preview</p>
+        </div>
+
+        <div class="main-grid">
+            <!-- Live Preview Section -->
+            <div class="preview-section">
+                <div class="preview-header">
+                    <h2>📹 Live Preview</h2>
+                    <div class="status-indicator">
+                        <div class="status-dot" id="statusDot"></div>
+                        <span id="statusText">Disconnected</span>
+                    </div>
+                </div>
+                
+                <div class="live-preview">
+                    <img id="livePreview" src="/video_feed" alt="Live Camera Feed" style="display: none;">
+                    <div class="preview-overlay" id="previewOverlay">
+                        🎥 Initializing Camera...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="controls-section">
+                <!-- Camera Controls -->
+                <div class="control-group">
+                    <h3>📷 Camera</h3>
+                    <select class="select-box" id="cameraSelect">
+                        <option value="0">Camera 0 (Default)</option>
+                        <option value="1">Camera 1</option>
+                        <option value="2">Camera 2</option>
+                    </select>
+                    <button class="btn" onclick="initCamera()">Connect Camera</button>
+                    <button class="btn capture" onclick="captureImage()">📸 Capture Image</button>
+                </div>
+
+                <!-- Capture Session -->
+                <div class="control-group">
+                    <h3>🎬 Capture Session</h3>
+                    <div style="margin-bottom: 10px;">
+                        <label for="captureRate">Capture Rate:</label>
+                        <select id="captureRate" class="select-box">
+                            <option value="24">24 per minute</option>
+                            <option value="36">36 per minute</option>
+                            <option value="72">72 per minute</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label for="sessionDuration">Duration (minutes, optional):</label>
+                        <input type="number" id="sessionDuration" class="input-box" placeholder="Leave empty for manual stop" min="1">
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <button id="startSession" class="btn">Start Session</button>
+                        <button id="stopSession" class="btn" disabled>Stop Session</button>
+                    </div>
+                    <div class="stats">
+                        <div>Status: <strong id="sessionActive">Inactive</strong></div>
+                        <div>Captures: <strong id="sessionCaptures">0</strong></div>
+                        <div>Elapsed: <strong id="sessionElapsed">0</strong>s</div>
+                        <div>Rate: <strong id="sessionRate">24</strong>/min</div>
+                    </div>
+                </div>
+
+                <!-- Platform Controls -->
+                <div class="control-group">
+                    <h3>🔄 Platform</h3>
+                    <button class="btn rotate" onclick="rotatePlatform()">Rotate Platform</button>
+                </div>
+
+                <!-- Storage Selection -->
+                <div class="control-group">
+                    <h3>💾 Storage</h3>
+                    <select class="select-box" id="storageSelect">
+                        <option value="">Select Storage Device...</option>
+                    </select>
+                    <button class="btn" onclick="loadStorage()">Refresh Storage</button>
+                </div>
+
+                <!-- Folder Browser -->
+                <div class="control-group">
+                    <h3>📂 Folder Browser</h3>
+                    <div style="margin-bottom: 10px;">
+                        <input type="text" class="input-box" id="currentPath" readonly>
+                        <button class="btn" onclick="goUp()">⬆️ Up</button>
+                    </div>
+                    
+                    <div class="folder-browser" id="folderBrowser">
+                        <div class="loading">Loading folders...</div>
+                    </div>
+                    
+                    <div style="margin-top: 10px;">
+                        <input type="text" class="input-box" id="newFolderName" placeholder="New folder name">
+                        <button class="btn" onclick="createFolder()">➕ Create Folder</button>
+                    </div>
+                </div>
+
+                <!-- Session Stats -->
+                <div class="stats">
+                    <div><strong>Captures:</strong> <span id="captureCount">0</span></div>
+                    <div><strong>Session Time:</strong> <span id="sessionTime">0s</span></div>
+                    <div><strong>Current Folder:</strong> <span id="currentFolder">-</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPath = '';
+        
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStorage();
+            loadFolder();
+            updateStatus();
+            
+            // Auto-refresh status every 2 seconds
+            setInterval(updateStatus, 2000);
+            
+            // Session management
+            let sessionStatusInterval = null;
+
+            document.getElementById('startSession').addEventListener('click', function() {
+                const rate = document.getElementById('captureRate').value;
+                const duration = document.getElementById('sessionDuration').value;
+                
+                const data = { rate: parseInt(rate) };
+                if (duration) {
+                    data.duration = parseInt(duration);
+                }
+                
+                fetch('/api/session/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('startSession').disabled = true;
+                        document.getElementById('stopSession').disabled = false;
+                        startSessionStatusUpdates();
+                        updateStatus(data.message);
+                    } else {
+                        updateStatus('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    updateStatus('Error starting session');
+                });
+            });
+
+            document.getElementById('stopSession').addEventListener('click', function() {
+                fetch('/api/session/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('startSession').disabled = false;
+                        document.getElementById('stopSession').disabled = true;
+                        stopSessionStatusUpdates();
+                        updateStatus(data.message);
+                    } else {
+                        updateStatus('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    updateStatus('Error stopping session');
+                });
+            });
+
+            function startSessionStatusUpdates() {
+                sessionStatusInterval = setInterval(updateSessionStatus, 1000);
+            }
+
+            function stopSessionStatusUpdates() {
+                if (sessionStatusInterval) {
+                    clearInterval(sessionStatusInterval);
+                    sessionStatusInterval = null;
+                }
+            }
+
+            function updateSessionStatus() {
+                fetch('/api/session/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('sessionActive').textContent = data.active ? 'Active' : 'Inactive';
+                    document.getElementById('sessionCaptures').textContent = data.captures;
+                    document.getElementById('sessionElapsed').textContent = data.elapsed;
+                    document.getElementById('sessionRate').textContent = data.rate;
+                    
+                    if (!data.active && sessionStatusInterval) {
+                        // Session ended automatically
+                        document.getElementById('startSession').disabled = false;
+                        document.getElementById('stopSession').disabled = true;
+                        stopSessionStatusUpdates();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating session status:', error);
+                });
+            }
+            
+            // Show live preview after 2 seconds
+            setTimeout(() => {
+                document.getElementById('livePreview').style.display = 'block';
+                document.getElementById('previewOverlay').style.display = 'none';
+            }, 2000);
+        });
+
+        async function initCamera() {
+            const cameraIndex = document.getElementById('cameraSelect').value;
+            try {
+                const response = await fetch('/api/camera/init', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({camera_index: parseInt(cameraIndex)})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateStatus();
+                    alert('Camera connected successfully!');
+                } else {
+                    alert('Failed to connect camera');
+                }
+            } catch (error) {
+                alert('Error connecting camera: ' + error.message);
+            }
+        }
+
+        async function captureImage() {
+            try {
+                const response = await fetch('/api/capture', {method: 'POST'});
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Image captured: ' + result.message);
+                    updateStatus();
+                    loadFolder(); // Refresh folder to show new image
+                } else {
+                    alert('Capture failed: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error capturing image: ' + error.message);
+            }
+        }
+
+        async function rotatePlatform() {
+            try {
+                const response = await fetch('/api/platform/rotate', {method: 'POST'});
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Platform rotated successfully!');
+                } else {
+                    alert('Platform rotation failed');
+                }
+            } catch (error) {
+                alert('Error rotating platform: ' + error.message);
+            }
+        }
+
+        async function loadStorage() {
+            try {
+                const response = await fetch('/api/storage');
+                const devices = await response.json();
+                
+                const select = document.getElementById('storageSelect');
+                select.innerHTML = '<option value="">Select Storage Device...</option>';
+                
+                devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.mountpoint;
+                    option.textContent = `${device.device} (${(device.free / 1024**3).toFixed(1)}GB free)`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading storage:', error);
+            }
+        }
+
+        async function loadFolder(path = '') {
+            try {
+                const url = path ? `/api/folder?path=${encodeURIComponent(path)}` : '/api/folder';
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                currentPath = data.path;
+                document.getElementById('currentPath').value = currentPath;
+                
+                const browser = document.getElementById('folderBrowser');
+                browser.innerHTML = '';
+                
+                data.contents.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'folder-item';
+                    div.innerHTML = `
+                        <span class="folder-icon">${item.is_dir ? '📁' : '📄'}</span>
+                        <span>${item.name}</span>
+                    `;
+                    
+                    if (item.is_dir) {
+                        div.onclick = () => loadFolder(item.path);
+                    }
+                    
+                    browser.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error loading folder:', error);
+            }
+        }
+
+        async function goUp() {
+            const parentPath = currentPath.split('/').slice(0, -1).join('/') || '/';
+            loadFolder(parentPath);
+        }
+
+        async function createFolder() {
+            const name = document.getElementById('newFolderName').value.trim();
+            if (!name) {
+                alert('Please enter a folder name');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/folder/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path: currentPath, name: name})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('newFolderName').value = '';
+                    loadFolder(currentPath);
+                    alert('Folder created successfully!');
+                } else {
+                    alert('Failed to create folder: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error creating folder: ' + error.message);
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+                
+                if (status.camera_connected) {
+                    statusDot.classList.add('connected');
+                    statusText.textContent = 'Camera Connected';
+                } else {
+                    statusDot.classList.remove('connected');
+                    statusText.textContent = 'Camera Disconnected';
+                }
+                
+                document.getElementById('captureCount').textContent = status.capture_count;
+                document.getElementById('sessionTime').textContent = status.session_time + 's';
+                document.getElementById('currentFolder').textContent = status.current_folder;
+                
+            } catch (error) {
+                console.error('Error updating status:', error);
+            }
+        }
+
+        // Storage selection handler
+        document.getElementById('storageSelect').addEventListener('change', function() {
+            const selectedPath = this.value;
+            if (selectedPath) {
+                loadFolder(selectedPath);
+                
+                // Set as current folder
+                fetch('/api/folder/set', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path: selectedPath})
+                });
+            }
+        });
+    </script>
+</body>
+</html>

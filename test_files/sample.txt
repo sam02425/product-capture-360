@@ -1,0 +1,14 @@
+This is a sample text file for testing the file browser application.
+
+The file browser supports:
+- Text file preview with syntax highlighting
+- Image preview with metadata
+- Data file preview (CSV, Excel, JSON)
+- Directory navigation
+- Folder creation
+- Real-time live preview
+
+This text file demonstrates the text preview functionality.
+You can see the content displayed with proper formatting and line breaks.
+
+The application handles various file types and provides appropriate previews for each.
