@@ -1,5 +1,5 @@
-streamlit==1.31.0
-opencv-python==4.9.0.80
+Flask==2.3.3
+opencv-python==4.8.1.78
 numpy==1.26.4
-pillow==10.2.0
-psutil==5.9.8
+Pillow==10.0.1
+psutil==5.9.6

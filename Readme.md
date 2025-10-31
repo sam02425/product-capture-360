@@ -1,12 +1,6 @@
-# 360° Product Image Capture System
+# Product Capture 360 - Production Flask Application
 
-> **Production-grade image capture for AI model training** | YOLOv11 | DOLG | DEIM | CVAT | Roboflow
-
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![UV](https://img.shields.io/badge/package%20manager-UV-yellow)](https://github.com/astral-sh/uv)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
-Professional image capture system for 360° product photography, optimized for training computer vision models. Supports 1-3 USB cameras with automated capture synchronized to rotating turntables.
+A professional-grade Flask web application for 360-degree product photography with automated capture, USB camera support, and organized storage management.
 
 ## ✨ Features
 
