@@ -1,1424 +1,946 @@
 #!/usr/bin/env python3
 """
-Lightweight Product Capture Application
-Flask-based with live camera preview - MANDATORY FEATURE
-Enhanced with production-grade logging and error handling
+360° Product Capture System (Production)
+- Single camera reader loop for reliable preview & capture
+- Robust camera scanning (macOS/Windows/Linux backends)
+- Storage discovery + manual path + folder browser with Up
+- Product-named session folder; all images saved there
+- High-rate auto capture (up to 180/min) with drift correction
+- Progress UI: images, target, time left, progress bar
+- Session artifacts: session_meta.json + captures.csv
+- Global CSV log: ~/.360photo/logs/product_log.csv (one row per session)
+- Rotating file logs: ~/.360photo/logs/app.log
 """
 
-import os
-import cv2
-import json
-import time
-import psutil
-import threading
-import signal
-import sys
-import atexit
-import queue
+import os, cv2, time, psutil, threading, signal, sys, atexit, platform, re, csv, json
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, render_template, Response, request, jsonify, send_from_directory
-from PIL import Image
-import base64
-import io
+from collections import deque
+from logging.handlers import RotatingFileHandler
 
-# Import our enhanced logging and error handling
-from logging_config import setup_logging, get_logger
-from error_handlers import (
-    handle_api_errors, handle_camera_errors, handle_storage_errors,
-    validate_input, retry_on_error, ErrorContext,
-    CameraError, StorageError, SessionError, ValidationError,
-    is_valid_camera_index, is_valid_path, is_valid_capture_rate, is_valid_duration
-)
-from monitoring import health_monitor
+from flask import Flask, Response, request, jsonify
+from flask_cors import CORS
+import logging
 
-# Initialize logging and monitoring
-logger = setup_logging()
+# ---------------- Optional Windows tweak ----------------
+if platform.system() == "Windows":
+    # Prefer DirectShow if MSMF is flaky
+    os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
 
-# Start health monitoring
-health_monitor.start_monitoring(interval=30.0)
+# ---------------- Paths & Logging ----------------
+APP_HOME = Path.home() / ".360photo"
+LOG_DIR  = APP_HOME / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+PRODUCT_LOG_CSV = LOG_DIR / "product_log.csv"  # global per-session log
 
+# Console + rotating file logger
+logger = logging.getLogger("capture-app")
+logger.setLevel(logging.INFO)
+fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.INFO)
+ch.setFormatter(fmt)
+logger.addHandler(ch)
+
+fh = RotatingFileHandler(LOG_DIR / "app.log", maxBytes=10_000_000, backupCount=5)
+fh.setLevel(logging.INFO)
+fh.setFormatter(fmt)
+logger.addHandler(fh)
+
+def log_info(msg):  logger.info(msg)
+def log_warn(msg):  logger.warning(msg)
+def log_err(msg):   logger.error(msg)
+
+# ---------------- Flask ----------------
 app = Flask(__name__)
+CORS(app)
 
-# Global error handler for Flask
-@app.errorhandler(404)
-def not_found_error(error):
-    return jsonify({
-        'success': False,
-        'error': {
-            'code': 'NOT_FOUND',
-            'message': 'The requested resource was not found',
-            'timestamp': datetime.utcnow().isoformat()
-        }
-    }), 404
+# ---------------- Helpers ----------------
+def is_windows(): return platform.system() == "Windows"
+def is_macos():   return platform.system() == "Darwin"
+def is_linux():   return platform.system() == "Linux"
 
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({
-        'success': False,
-        'error': {
-            'code': 'INTERNAL_ERROR',
-            'message': 'An internal server error occurred',
-            'timestamp': datetime.utcnow().isoformat()
-        }
-    }), 500
+def sanitize_product_name(name: str) -> str:
+    name = name.strip()
+    name = re.sub(r"\s+", "-", name)
+    name = re.sub(r"[^A-Za-z0-9._\\-]", "", name)
+    name = re.sub(r"-{2,}", "-", name)
+    return name[:128] if name else "Product"
 
-class ProductCaptureSystem:
+def list_windows_drives():
+    out = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        p = f"{letter}:/"
+        if os.path.exists(p):
+            try:
+                u = psutil.disk_usage(p)
+                out.append({
+                    "device": f"{letter}:",
+                    "mountpoint": p,
+                    "fstype": "NTFS/FAT/exFAT",
+                    "total": u.total, "used": u.used, "free": u.free,
+                    "percent": round(u.used/u.total*100, 1),
+                    "free_gb": round(u.free/1024**3, 2),
+                })
+            except Exception:
+                pass
+    return out
+
+def extra_mount_roots():
+    roots = []
+    if is_macos(): roots.append(Path("/Volumes"))
+    if is_linux(): roots += [Path("/media"), Path("/mnt")]
+    return [r for r in roots if r.exists()]
+
+def ts_now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def iso_now():
+    return datetime.now().isoformat(timespec="seconds")
+
+# Ensure global product log exists with header
+if not PRODUCT_LOG_CSV.exists():
+    with PRODUCT_LOG_CSV.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["session_id","product","start_time","end_time","images","rate_per_min","duration_s","output_dir"])
+
+# ---------------- Core System ----------------
+class CaptureSystem:
     def __init__(self):
-        self.camera = None
-        self.camera_index = 1
-        self.is_capturing = False
-        self.current_storage = None
-        self.current_folder = "/Users/saumil/Desktop/360Photo/p"
-        self.current_product = None  # Add product tracking
-        self.capture_count = 0
-        self.session_start = time.time()
-        self.session_start_time = time.time()  # Add missing attribute
-        
-        # Session management
+        # Camera
+        self.cap = None
+        self.camera_index = 0
+        self.reader_thread = None
+        self.reader_stop = threading.Event()
+        self.frame_lock = threading.Lock()
+        self.latest_frame = None
+        self.preview_width = 1280
+        self.preview_height = 720
+        self.request_fps = 30
+        self.last_ok_ts = 0
+        self.last_error = ""
+
+        # Async saver
+        self.save_q = deque(maxlen=1000)  # drop-oldest strategy when overwhelmed
+        self.saver_stop = threading.Event()
+        self.saver_thread = threading.Thread(target=self._saver_loop, name="DiskSaver", daemon=True)
+        self.saver_thread.start()
+
+        # Storage
+        self.default_folder = str(Path.home() / "360Photo" / "captures")
+        Path(self.default_folder).mkdir(parents=True, exist_ok=True)
+        self.current_folder = self.default_folder
+
+        # Session
         self.session_active = False
         self.session_thread = None
-        self.capture_rate = 72  # Default to 72 captures per minute (Very Fast)
-        self.session_duration = 0
-        
-        # Real-time performance monitoring
-        self.frame_count = 0
-        self.fps_start_time = time.time()
-        self.current_fps = 0
-        self.frame_times = []
-        self.max_frame_history = 30  # Keep last 30 frame times for averaging
-        self.camera_resolution = (0, 0)
-        self.last_frame_time = 0
-        self.frame_latency = 0
-        self.connection_errors = 0
-        self.max_connection_errors = 5
-        self.last_successful_frame = time.time()
-        self.reconnection_attempts = 0
-        self.max_reconnection_attempts = 3
-        
-        # Enhanced logging
-        self.logger = get_logger()
-        
-        # Register cleanup handlers
-        atexit.register(self.cleanup)
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        self.logger.logger.info("ProductCaptureSystem initialized", extra={
-            'context': {'current_folder': self.current_folder}
-        })
-    
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully"""
-        self.logger.logger.info(f"Received signal {signum}, shutting down gracefully...")
-        self.cleanup()
-        # Don't call sys.exit(0) as it terminates the Flask process
-        # Let Flask handle the shutdown gracefully
-    
-    def cleanup(self):
-        """Clean up resources properly"""
-        with ErrorContext("system_cleanup"):
-            self.logger.logger.info("Starting system cleanup...")
-            
-            # Stop any active session
-            if self.session_active:
-                self.session_active = False
-                if self.session_thread and self.session_thread.is_alive():
-                    self.session_thread.join(timeout=2)
-            
-            # Release camera resources
-            if self.camera:
-                try:
-                    self.camera.release()
-                    self.logger.logger.info("Camera released successfully")
-                except Exception as e:
-                    self.logger.log_error(e, {'operation': 'camera_release'})
-                finally:
-                    self.camera = None
-            
-            # Destroy any OpenCV windows
-            try:
-                cv2.destroyAllWindows()
-            except Exception as e:
-                self.logger.log_error(e, {'operation': 'opencv_cleanup'})
-            
-            self.logger.logger.info("System cleanup completed")
-            self.capture_count = 0
-            self.session_captures = 0
-            self.session_start_time = None
-
-    @handle_camera_errors
-    @retry_on_error(max_retries=3, delay=1.0, exceptions=(CameraError,))
-    @validate_input(camera_index=is_valid_camera_index)
-    def initialize_camera(self, camera_index=1):
-        """Initialize camera with enhanced USB camera detection and robust error handling"""
-        with ErrorContext("camera_initialization", camera_index=camera_index):
-            try:
-                # Release existing camera if any
-                if self.camera:
-                    try:
-                        self.camera.release()
-                        self.logger.logger.info("Previous camera released")
-                    except Exception as e:
-                        self.logger.log_error(e, {'operation': 'previous_camera_release'})
-                    finally:
-                        self.camera = None
-                    
-                    # Wait longer for camera to fully release
-                    time.sleep(1.0)
-                    
-                    # Destroy any OpenCV windows that might be holding resources
-                    cv2.destroyAllWindows()
-                
-                # Enhanced USB camera detection with multiple backends
-                self.logger.logger.info(f"Attempting to initialize camera {camera_index}")
-                
-                # Try different backends for better USB camera compatibility
-                backends_to_try = [
-                    cv2.CAP_AVFOUNDATION,  # macOS native - best for USB cameras
-                    cv2.CAP_V4L2,          # Linux V4L2
-                    cv2.CAP_DSHOW,         # Windows DirectShow
-                    cv2.CAP_ANY            # Fallback
-                ]
-                
-                camera_initialized = False
-                for backend in backends_to_try:
-                    try:
-                        self.logger.logger.info(f"Trying backend {backend} for camera {camera_index}")
-                        self.camera = cv2.VideoCapture(camera_index, backend)
-                        
-                        if self.camera.isOpened():
-                            # Test frame capture to ensure camera is working
-                            ret, test_frame = self.camera.read()
-                            if ret and test_frame is not None:
-                                self.logger.logger.info(f"Camera {camera_index} working with backend {backend}")
-                                camera_initialized = True
-                                break
-                            else:
-                                self.logger.logger.debug(f"Camera {camera_index} opened but no frame with backend {backend}")
-                                self.camera.release()
-                                self.camera = None
-                        else:
-                            self.logger.logger.debug(f"Camera {camera_index} failed to open with backend {backend}")
-                            if self.camera:
-                                self.camera.release()
-                            self.camera = None
-                    except Exception as e:
-                        self.logger.logger.debug(f"Backend {backend} failed for camera {camera_index}: {str(e)}")
-                        if self.camera:
-                            self.camera.release()
-                        self.camera = None
-                        continue
-                
-                if not camera_initialized:
-                    raise CameraError(f"Camera {camera_index} failed to initialize with any backend", camera_index)
-                
-                # Set camera parameters safely to prevent segmentation faults
-                try:
-                    # Set basic parameters with error checking
-                    self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to prevent memory issues
-                    
-                    # Try to set resolution, but don't fail if not supported
-                    try:
-                        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # Lower resolution to prevent crashes
-                        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                    except Exception as e:
-                        self.logger.logger.debug(f"Could not set resolution: {e}")
-                    
-                    # Try to set FPS, but don't fail if not supported
-                    try:
-                        self.camera.set(cv2.CAP_PROP_FPS, 15)  # Lower FPS to prevent crashes
-                    except Exception as e:
-                        self.logger.logger.debug(f"Could not set FPS: {e}")
-                    
-                    # Skip codec setting as it can cause segfaults on some systems
-                    # self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-                    
-                    # Skip auto exposure and autofocus as they can cause issues
-                    # self.camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-                    # self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 1)
-                    
-                except Exception as e:
-                    self.logger.logger.warning(f"Some camera properties could not be set: {e}")
-                    # Continue anyway as basic camera functionality might still work
-                
-                # Final test to ensure everything is working
-                try:
-                    ret, test_frame = self.camera.read()
-                    if not ret or test_frame is None:
-                        self.logger.logger.warning("Camera configured but cannot capture test frame")
-                        # Don't fail here, just log the warning and continue
-                        # Some cameras need time to warm up
-                    else:
-                        self.logger.logger.info(f"USB Camera {camera_index} initialized successfully with resolution {test_frame.shape}")
-                except Exception as e:
-                    self.logger.logger.warning(f"Test frame capture failed: {e}")
-                    # Continue anyway as camera might work during actual operation
-                
-                self.camera_index = camera_index
-                self.logger.logger.info(f"Camera {camera_index} initialization completed")
-                return True
-                
-            except Exception as e:
-                if self.camera:
-                    try:
-                        self.camera.release()
-                    except:
-                        pass
-                    self.camera = None
-                
-                if isinstance(e, CameraError):
-                    raise
-                else:
-                    raise CameraError(f"Unexpected error during camera initialization: {str(e)}", camera_index)
-
-    def get_frame(self):
-        """Get current camera frame with enhanced performance monitoring"""
-        frame_start_time = time.time()
-        
-        if not self.camera or not self.camera.isOpened():
-            self.connection_errors += 1
-            return None
-        
-        try:
-            ret, frame = self.camera.read()
-            if ret and frame is not None:
-                # Update performance metrics
-                current_time = time.time()
-                self.frame_count += 1
-                self.last_successful_frame = current_time
-                self.connection_errors = 0  # Reset error counter on success
-                
-                # Calculate frame latency
-                self.frame_latency = (current_time - frame_start_time) * 1000  # ms
-                
-                # Update frame timing history
-                if self.last_frame_time > 0:
-                    frame_interval = current_time - self.last_frame_time
-                    self.frame_times.append(frame_interval)
-                    if len(self.frame_times) > self.max_frame_history:
-                        self.frame_times.pop(0)
-                
-                self.last_frame_time = current_time
-                
-                # Calculate FPS every second
-                if current_time - self.fps_start_time >= 1.0:
-                    self.current_fps = self.frame_count / (current_time - self.fps_start_time)
-                    self.frame_count = 0
-                    self.fps_start_time = current_time
-                
-                # Store camera resolution
-                if self.camera_resolution == (0, 0):
-                    self.camera_resolution = (frame.shape[1], frame.shape[0])
-                
-                return frame.copy()  # Create a copy to avoid memory issues
-            else:
-                self.connection_errors += 1
-        except Exception as e:
-            self.connection_errors += 1
-            self.logger.log_error(e, {'operation': 'frame_capture', 'camera_index': self.camera_index})
-        
-        return None
-
-    @handle_camera_errors
-    def capture_image(self):
-        """Capture image with enhanced error handling"""
-        with ErrorContext("image_capture", camera_index=self.camera_index):
-            if not self.camera or not self.camera.isOpened():
-                raise CameraError("Camera not initialized or not available")
-            
-            try:
-                ret, frame = self.camera.read()
-                if not ret or frame is None:
-                    raise CameraError("Failed to capture frame from camera")
-                
-                # Generate filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"capture_{timestamp}_{self.capture_count:04d}.jpg"
-                filepath = os.path.join(self.current_folder, filename)
-                
-                # Ensure directory exists
-                os.makedirs(self.current_folder, exist_ok=True)
-                
-                # Save image
-                success = cv2.imwrite(filepath, frame)
-                if not success:
-                    raise StorageError(f"Failed to save image to {filepath}")
-                
-                self.capture_count += 1
-                self.logger.logger.info(f"Image captured successfully: {filename}")
-                
-                return True, f"Image saved as {filename}"
-                
-            except Exception as e:
-                if isinstance(e, (CameraError, StorageError)):
-                    raise
-                else:
-                    raise CameraError(f"Unexpected error during image capture: {str(e)}")
-
-    @handle_storage_errors
-    @validate_input(folder_path=is_valid_path, folder_name=is_valid_path)
-    def create_folder(self, folder_path, folder_name):
-        """Create a new folder with error handling"""
-        with ErrorContext("folder_creation", folder_path=folder_path, folder_name=folder_name):
-            try:
-                new_folder_path = os.path.join(folder_path, folder_name)
-                
-                if os.path.exists(new_folder_path):
-                    raise StorageError(f"Folder '{folder_name}' already exists", new_folder_path)
-                
-                os.makedirs(new_folder_path, exist_ok=True)
-                self.logger.logger.info(f"Created folder: {new_folder_path}")
-                return True, f"Folder '{folder_name}' created successfully"
-                
-            except OSError as e:
-                raise StorageError(f"Failed to create folder '{folder_name}': {str(e)}", folder_path)
-
-    def start_capture_session(self, capture_rate, duration_minutes=1):
-        """Start automated capture session with precise 1-minute duration"""
-        if self.session_active:
-            return False, "Session already active"
-        
-        # Force 1-minute duration for all sessions
-        duration_minutes = 1
-        
-        self.capture_rate = capture_rate
-        self.session_active = True
+        self.session_stop = threading.Event()
+        self.session_rate = 24  # per minute
+        self.session_duration_s = None
+        self.session_start_time = None
         self.session_captures = 0
-        self.session_start_time = time.time()
-        self.session_duration = 60  # Always 60 seconds (1 minute)
-        self.expected_captures = capture_rate  # Expected number of captures in 1 minute
-        self.session_validation = {
-            'start_time': self.session_start_time,
-            'expected_duration': 60,
-            'expected_captures': capture_rate,
-            'actual_captures': 0,
-            'timing_errors': []
-        }
-        
-        # Start session thread
-        self.session_thread = threading.Thread(target=self._capture_session_worker)
-        self.session_thread.daemon = True
-        self.session_thread.start()
-        
-        logger.logger.info(f"Starting 1-minute session: {capture_rate} captures expected")
-        return True, f"1-minute session started: {capture_rate} captures expected"
-    
-    def stop_capture_session(self):
-        """Stop automated capture session with validation"""
-        if not self.session_active:
-            return False, "No active session"
-        
-        # Calculate session metrics before stopping
-        actual_duration = time.time() - self.session_start_time
-        duration_error = abs(actual_duration - 60)  # Should be close to 60 seconds
-        capture_error = abs(self.session_captures - self.expected_captures)
-        
-        self.session_active = False
-        if self.session_thread:
-            self.session_thread.join(timeout=2)
-        
-        # Validation results
-        validation_result = {
-            'expected_duration': 60,
-            'actual_duration': round(actual_duration, 2),
-            'duration_error': round(duration_error, 2),
-            'expected_captures': self.expected_captures,
-            'actual_captures': self.session_captures,
-            'capture_error': capture_error,
-            'success': duration_error <= 1.0 and capture_error <= 1  # Allow 1 second and 1 frame tolerance
-        }
-        
-        logger.logger.info(f"Session completed - Duration: {actual_duration:.2f}s, Captures: {self.session_captures}/{self.expected_captures}")
-        
-        return True, f"Session completed: {self.session_captures}/{self.expected_captures} captures in {actual_duration:.1f}s", validation_result
-    
-    def _capture_session_worker(self):
-        """Worker thread for automated capture session with precise timing"""
-        # Calculate precise interval - for N captures in 60 seconds, we need N-1 intervals
-        # This ensures the last capture happens just before 60 seconds
-        if self.capture_rate == 1:
-            interval = 60.0  # Single capture at start
-        else:
-            interval = 60.0 / (self.capture_rate - 1)  # Distribute captures evenly across 60 seconds
-        
-        logger.logger.info(f"Session worker started - Rate: {self.capture_rate}/min, Interval: {interval:.3f}s, Expected captures: {self.expected_captures}")
-        
-        # Pre-calculate all capture times for maximum precision
-        capture_times = []
-        for i in range(self.capture_rate):
-            if self.capture_rate == 1:
-                capture_time = self.session_start_time
-            else:
-                capture_time = self.session_start_time + (i * 60.0 / self.capture_rate)
-            capture_times.append(capture_time)
-        
-        capture_index = 0
-        
-        while self.session_active and capture_index < len(capture_times):
-            try:
-                current_time = time.time()
-                elapsed = current_time - self.session_start_time
-                
-                # Strict 1-minute session enforcement with small buffer for final capture
-                if elapsed >= 60.1:  # 100ms buffer for final capture
-                    logger.logger.info(f"Session completed - 1 minute elapsed. Captures: {self.session_captures}")
-                    self.session_active = False
-                    break
-                
-                # Check if it's time for the next scheduled capture
-                if current_time >= capture_times[capture_index]:
-                    # Capture image with error handling
-                    success, result = self.capture_image()
-                    if success:
-                        self.capture_count += 1
-                        self.session_captures += 1
-                        self.session_validation['actual_captures'] = self.session_captures
-                        
-                        # Calculate timing accuracy against scheduled time
-                        expected_time = capture_times[capture_index]
-                        timing_error = abs(current_time - expected_time)
-                        self.session_validation['timing_errors'].append(timing_error)
-                        
-                        logger.logger.info(f"Capture {self.session_captures}/{self.expected_captures} at {elapsed:.2f}s (scheduled: {expected_time - self.session_start_time:.2f}s, error: {timing_error:.3f}s)")
-                    else:
-                        logger.logger.warning(f"Capture failed: {result}")
-                    
-                    # Move to next scheduled capture
-                    capture_index += 1
-                
-                # Sleep for a short time to avoid busy waiting
-                time.sleep(0.005)  # 5ms precision for better timing
-                
-            except Exception as e:
-                logger.logger.error(f"Session worker error: {e}")
-                time.sleep(0.1)  # Brief pause before retry
-        
-        # Final validation check
-        if self.session_captures < self.expected_captures:
-            logger.logger.warning(f"Session ended with {self.session_captures}/{self.expected_captures} captures")
-        
-        self.session_active = False
-    
-    def get_session_status(self):
-        """Get current session status with progress tracking"""
-        if not self.session_active:
-            return {
-                'active': False,
-                'captures': 0,
-                'elapsed': 0,
-                'remaining': 0,
-                'progress': 0,
-                'rate': self.capture_rate,
-                'expected_captures': getattr(self, 'expected_captures', 0)
-            }
-        
-        elapsed = time.time() - self.session_start_time if self.session_start_time else 0
-        remaining = max(0, 60 - elapsed)  # Always 60 seconds total
-        progress = min(100, (elapsed / 60) * 100)  # Progress percentage
-        
-        return {
-            'active': True,
-            'captures': self.session_captures,
-            'elapsed': round(elapsed, 1),
-            'remaining': round(remaining, 1),
-            'progress': round(progress, 1),
-            'rate': self.capture_rate,
-            'expected_captures': getattr(self, 'expected_captures', 0),
-            'duration': 60  # Always 1 minute
-        }
+        self.session_output_dir = None
+        self.session_product_name = None
+        self.session_id = None
+        self.total_captures = 0
+        self.session_lock = threading.Lock()
 
-# Global capture system instance
-capture_system = ProductCaptureSystem()
+        atexit.register(self.cleanup)
+        signal.signal(signal.SIGINT,  self._signal)
+        signal.signal(signal.SIGTERM, self._signal)
 
-def generate_frames():
-    """Generate camera frames for live preview with enhanced performance monitoring and visual indicators"""
-    frame_count = 0
-    max_consecutive_failures = 10
-    consecutive_failures = 0
-    last_performance_log = time.time()
-    performance_log_interval = 5.0  # Log performance every 5 seconds
-    
-    try:
-        while True:
-            try:
-                frame_start = time.time()
-                frame = capture_system.get_frame()
-                
-                if frame is not None:
-                    consecutive_failures = 0  # Reset failure counter
-                    
-                    # Add performance overlay to frame
-                    frame_with_overlay = add_performance_overlay(frame)
-                    
-                    # Encode frame as JPEG with optimized quality
-                    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85, cv2.IMWRITE_JPEG_OPTIMIZE, 1]
-                    ret, buffer = cv2.imencode('.jpg', frame_with_overlay, encode_params)
-                    
-                    if ret:
-                        frame_bytes = buffer.tobytes()
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                        
-                        # Log performance metrics periodically
-                        current_time = time.time()
-                        if current_time - last_performance_log >= performance_log_interval:
-                            log_performance_metrics()
-                            last_performance_log = current_time
-                    else:
-                        consecutive_failures += 1
-                else:
-                    consecutive_failures += 1
-                    
-                    # Check if we need to attempt reconnection
-                    if capture_system.connection_errors >= capture_system.max_connection_errors:
-                        attempt_camera_reconnection()
-                    
-                # If too many consecutive failures, send placeholder with status info
-                if consecutive_failures >= max_consecutive_failures:
-                    placeholder_frame = create_status_placeholder_frame()
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + placeholder_frame + b'\r\n')
-                    time.sleep(1.0)  # Longer delay when camera is not working
-                    consecutive_failures = 0  # Reset after sending placeholder
-                else:
-                    # Adaptive frame rate based on performance
-                    target_fps = 30
-                    frame_time = time.time() - frame_start
-                    target_frame_time = 1.0 / target_fps
-                    sleep_time = max(0, target_frame_time - frame_time)
-                    time.sleep(sleep_time)
-                    
-            except GeneratorExit:
-                # Client disconnected, exit gracefully
-                logger.logger.info("Video stream client disconnected")
-                break
-            except Exception as e:
-                logger.log_error(e, {'operation': 'frame_generation', 'consecutive_failures': consecutive_failures})
-                consecutive_failures += 1
-                time.sleep(0.5)  # Wait before retry
-                
-                # If too many errors, break the loop to prevent infinite error generation
-                if consecutive_failures >= max_consecutive_failures * 2:
-                    logger.logger.error("Too many consecutive frame generation errors, stopping stream")
-                    break
-                    
-    except Exception as e:
-        logger.log_error(e, {'operation': 'generate_frames_outer'})
-    finally:
-        logger.logger.info("Video frame generation stopped")
+        log_info("CaptureSystem initialized")
 
-# Flask Routes with Enhanced Error Handling
-@app.route('/')
-def index():
-    """Main page with enhanced error handling"""
-    try:
-        logger.logger.info("Main page accessed")
-        return render_template('index.html')
-    except Exception as e:
-        logger.log_error(e, {'route': 'index'})
-        return jsonify({
-            'success': False,
-            'error': {
-                'code': 'TEMPLATE_ERROR',
-                'message': 'Failed to load main page',
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }), 500
+    # ---------- Lifecycle ----------
+    def _signal(self, *_):
+        self.cleanup()
+        sys.exit(0)
 
-@app.route('/video_feed')
-def video_feed():
-    """Video streaming route with error handling"""
-    try:
-        logger.logger.info("Video feed requested")
-        
-        def safe_generate_frames():
-            """Wrapper for generate_frames with additional safety"""
-            try:
-                for frame in generate_frames():
-                    yield frame
-            except GeneratorExit:
-                logger.logger.info("Video feed generator exit")
-                return
-            except Exception as e:
-                logger.log_error(e, {'route': 'video_feed_generator'})
-                return
-        
-        return Response(safe_generate_frames(),
-                       mimetype='multipart/x-mixed-replace; boundary=frame')
-    except Exception as e:
-        logger.log_error(e, {'route': 'video_feed'})
-        return Response(status=500)
-
-@app.route('/api/camera/scan', methods=['GET'])
-@handle_api_errors
-def scan_cameras():
-    """Enhanced camera scanning with better USB camera detection"""
-    with ErrorContext("camera_scan"):
+    def cleanup(self):
+        self.saver_stop.set()
         try:
-            logger.logger.info("Starting enhanced camera scan")
-            cameras = []
-            
-            # Try different backends for better USB camera detection
-            backends_to_try = [
-                ('AVFoundation', cv2.CAP_AVFOUNDATION),  # macOS native - best for USB cameras
-                ('V4L2', cv2.CAP_V4L2),                  # Linux V4L2
-                ('DirectShow', cv2.CAP_DSHOW),           # Windows DirectShow
-                ('Default', cv2.CAP_ANY)                 # Fallback
-            ]
-            
-            # Test camera indices 0-9 with multiple backends
-            for i in range(10):
-                camera_found = False
-                best_backend = None
-                best_resolution = None
-                
-                for backend_name, backend_id in backends_to_try:
-                    try:
-                        cap = cv2.VideoCapture(i, backend_id)
-                        if cap.isOpened():
-                            # Try to read a frame to verify the camera works
-                            ret, frame = cap.read()
-                            if ret and frame is not None:
-                                # Get camera properties
-                                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                                
-                                # Prefer higher resolution cameras and USB cameras
-                                resolution_score = width * height
-                                if not camera_found or resolution_score > (best_resolution[0] * best_resolution[1]):
-                                    best_backend = backend_name
-                                    best_resolution = (width, height)
-                                    camera_found = True
-                        
-                        cap.release()
-                        
-                    except Exception as e:
-                        logger.logger.debug(f"Camera {i} with backend {backend_name} failed: {str(e)}")
+            if self.saver_thread and self.saver_thread.is_alive():
+                self.saver_thread.join(timeout=2)
+        except Exception:
+            pass
+
+        self.stop_reader()
+        if self.cap:
+            try: self.cap.release()
+            except Exception: pass
+            self.cap = None
+
+    # ---------- Camera ----------
+    def _apply_safe_video_params(self, cap):
+        try:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.preview_width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.preview_height)
+            cap.set(cv2.CAP_PROP_FPS,          self.request_fps)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
+            cap.read()  # settle
+        except Exception:
+            pass
+
+    def _try_formats_and_resolutions(self, index, backend):
+        fourccs = [cv2.VideoWriter_fourcc(*'MJPG'), cv2.VideoWriter_fourcc(*'YUYV')]
+        resolutions = [(640, 480), (1280, 720), (1920, 1080)]
+        fps_candidates = [30, 25, 15]
+        for fourcc in fourccs:
+            for (w, h) in resolutions:
+                for fps in fps_candidates:
+                    cap = cv2.VideoCapture(index, backend)
+                    if not cap or not cap.isOpened():
+                        if cap: cap.release()
                         continue
-                
-                if camera_found:
-                    camera_name = f"Camera {i} ({best_resolution[0]}x{best_resolution[1]}) - {best_backend}"
-                    
-                    # Skip built-in cameras if we're looking for USB cameras
-                    # Built-in cameras often have lower indices and specific resolutions
-                    is_likely_usb = i > 0 or best_resolution[0] >= 1280
-                    
-                    cameras.append({
-                        'index': i,
-                        'name': camera_name,
-                        'width': best_resolution[0],
-                        'height': best_resolution[1],
-                        'backend': best_backend,
-                        'is_usb_likely': is_likely_usb
-                    })
-                    logger.logger.info(f"Found camera {i}: {camera_name} (USB likely: {is_likely_usb})")
-            
-            cv2.destroyAllWindows()
-            
-            if not cameras:
-                logger.logger.warning("No cameras found during scan")
-                return jsonify({
-                    'success': False,
-                    'error': {
-                        'code': 'NO_CAMERAS_FOUND',
-                        'message': 'No available cameras detected. Please check USB connections and try again.',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'troubleshooting': [
-                            'Ensure USB camera is properly connected',
-                            'Check if camera is being used by another application',
-                            'Try different USB ports',
-                            'Restart the camera or computer if needed'
-                        ]
-                    }
-                }), 404
-            
-            # Sort cameras to prioritize likely USB cameras
-            cameras.sort(key=lambda x: (x['is_usb_likely'], x['width'] * x['height']), reverse=True)
-            
-            logger.logger.info(f"Enhanced camera scan completed, found {len(cameras)} cameras")
-            return jsonify({
-                'success': True,
-                'cameras': cameras,
-                'count': len(cameras),
-                'usb_cameras': [cam for cam in cameras if cam['is_usb_likely']],
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except Exception as e:
-            raise CameraError(f"Enhanced camera scan failed: {str(e)}")
-
-@app.route('/api/camera/init', methods=['POST'])
-@handle_api_errors
-@validate_input(camera_index=is_valid_camera_index)
-def init_camera():
-    """Initialize camera with enhanced error handling"""
-    with ErrorContext("camera_init_api"):
-        try:
-            data = request.get_json()
-            if not data or 'camera_index' not in data:
-                raise ValidationError("Missing camera_index in request")
-            
-            camera_index = data['camera_index']
-            logger.logger.info(f"Camera initialization requested for index {camera_index}")
-            
-            success = capture_system.initialize_camera(camera_index)
-            
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': f'Camera {camera_index} initialized successfully',
-                    'camera_index': camera_index,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-            else:
-                raise CameraError(f"Failed to initialize camera {camera_index}")
-                
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            if isinstance(e, CameraError):
-                raise
-            else:
-                raise CameraError(f"Unexpected error during camera initialization: {str(e)}")
-
-@app.route('/api/capture', methods=['POST'])
-@handle_api_errors
-def capture_image():
-    """Capture image with enhanced error handling"""
-    with ErrorContext("image_capture_api"):
-        try:
-            logger.logger.info("Image capture requested")
-            success, result = capture_system.capture_image()
-            
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': result,
-                    'capture_count': capture_system.capture_count,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-            else:
-                raise CameraError(f"Image capture failed: {result}")
-                
-        except Exception as e:
-            if isinstance(e, (CameraError, StorageError)):
-                raise
-            else:
-                raise CameraError(f"Unexpected error during image capture: {str(e)}")
-
-@app.route('/api/storage/devices', methods=['GET'])
-@handle_api_errors
-def get_storage_devices():
-    """Get storage devices with enhanced error handling"""
-    with ErrorContext("storage_devices_api"):
-        try:
-            logger.logger.info("Storage devices requested")
-            devices = []
-            
-            for partition in psutil.disk_partitions():
-                try:
-                    usage = psutil.disk_usage(partition.mountpoint)
-                    device_info = {
-                        'device': partition.device,
-                        'mountpoint': partition.mountpoint,
-                        'fstype': partition.fstype,
-                        'total': usage.total,
-                        'used': usage.used,
-                        'free': usage.free,
-                        'percent': round((usage.used / usage.total) * 100, 1)
-                    }
-                    devices.append(device_info)
-                except PermissionError:
-                    continue
-                except Exception as e:
-                    logger.logger.warning(f"Error reading partition {partition.device}: {str(e)}")
-                    continue
-            
-            return jsonify({
-                'success': True,
-                'devices': devices,
-                'count': len(devices),
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except Exception as e:
-            raise StorageError(f"Failed to retrieve storage devices: {str(e)}")
-
-@app.route('/api/folder/contents', methods=['POST'])
-@handle_api_errors
-@validate_input(folder_path=is_valid_path)
-def get_folder_contents():
-    """Get folder contents with enhanced error handling"""
-    with ErrorContext("folder_contents_api"):
-        try:
-            data = request.get_json()
-            if not data or 'path' not in data:
-                raise ValidationError("Missing path in request")
-            
-            folder_path = data['path']
-            logger.logger.info(f"Folder contents requested for: {folder_path}")
-            
-            contents = []
-            path = Path(folder_path)
-            
-            if not path.exists():
-                raise StorageError(f"Path does not exist: {folder_path}", folder_path)
-            
-            if not path.is_dir():
-                raise StorageError(f"Path is not a directory: {folder_path}", folder_path)
-            
-            for item in sorted(path.iterdir()):
-                try:
-                    stat = item.stat()
-                    item_info = {
-                        'name': item.name,
-                        'path': str(item),
-                        'is_dir': item.is_dir(),
-                        'size': stat.st_size if not item.is_dir() else 0,
-                        'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    }
-                    contents.append(item_info)
-                except (PermissionError, OSError) as e:
-                    logger.logger.warning(f"Cannot access item {item}: {str(e)}")
-                    continue
-            
-            return jsonify({
-                'success': True,
-                'contents': contents,
-                'path': folder_path,
-                'count': len(contents),
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            if isinstance(e, StorageError):
-                raise
-            else:
-                raise StorageError(f"Failed to read folder contents: {str(e)}", folder_path)
-
-@app.route('/api/folder/create', methods=['POST'])
-@handle_api_errors
-@validate_input(folder_path=is_valid_path, folder_name=is_valid_path)
-def create_folder():
-    """Create folder with enhanced error handling"""
-    with ErrorContext("folder_create_api"):
-        try:
-            data = request.get_json()
-            if not data or 'path' not in data or 'name' not in data:
-                raise ValidationError("Missing path or name in request")
-            
-            folder_path = data['path']
-            folder_name = data['name']
-            
-            logger.logger.info(f"Folder creation requested: {folder_name} in {folder_path}")
-            
-            success, result = capture_system.create_folder(folder_path, folder_name)
-            
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': result,
-                    'path': os.path.join(folder_path, folder_name),
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-            else:
-                raise StorageError(f"Failed to create folder: {result}")
-                
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            if isinstance(e, StorageError):
-                raise
-            else:
-                raise StorageError(f"Unexpected error during folder creation: {str(e)}")
-
-@app.route('/api/folder/set', methods=['POST'])
-@handle_api_errors
-@validate_input(folder_path=is_valid_path)
-def set_current_folder():
-    """Set current folder with enhanced error handling"""
-    with ErrorContext("folder_set_api"):
-        try:
-            data = request.get_json()
-            if not data or 'path' not in data:
-                raise ValidationError("Missing path in request")
-            
-            folder_path = data['path']
-            
-            if not os.path.exists(folder_path):
-                raise StorageError(f"Folder does not exist: {folder_path}", folder_path)
-            
-            if not os.path.isdir(folder_path):
-                raise StorageError(f"Path is not a directory: {folder_path}", folder_path)
-            
-            capture_system.current_folder = folder_path
-            logger.logger.info(f"Current folder set to: {folder_path}")
-            
-            return jsonify({
-                'success': True,
-                'message': f'Current folder set to: {folder_path}',
-                'current_folder': folder_path,
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            if isinstance(e, StorageError):
-                raise
-            else:
-                raise StorageError(f"Failed to set current folder: {str(e)}")
-
-@app.route('/api/status')
-@handle_api_errors
-def get_status():
-    """Get system status with enhanced real-time performance metrics"""
-    start_time = time.time()
-    
-    try:
-        with ErrorContext("get_status"):
-            # Calculate average frame time
-            avg_frame_time = 0
-            if capture_system.frame_times:
-                avg_frame_time = sum(capture_system.frame_times) / len(capture_system.frame_times)
-            
-            # Calculate camera health score
-            camera_health = calculate_camera_health_score()
-            
-            status = {
-                'camera_connected': capture_system.camera is not None and capture_system.camera.isOpened(),
-                'current_folder': capture_system.current_folder,
-                'capture_count': capture_system.capture_count,
-                'session_active': capture_system.session_active,
-                'session_time': int(time.time() - capture_system.session_start_time) if capture_system.session_start_time else 0,
-                'performance': {
-                    'current_fps': round(capture_system.current_fps, 2),
-                    'frame_latency_ms': round(capture_system.frame_latency, 2),
-                    'avg_frame_time_ms': round(avg_frame_time * 1000, 2),
-                    'camera_resolution': capture_system.camera_resolution,
-                    'connection_errors': capture_system.connection_errors,
-                    'last_successful_frame': capture_system.last_successful_frame,
-                    'camera_health_score': camera_health,
-                    'reconnection_attempts': capture_system.reconnection_attempts
-                }
-            }
-            
-            # Record API call metrics
-            response_time = (time.time() - start_time) * 1000
-            health_monitor.record_api_call('/api/status', response_time, 200)
-            
-            return jsonify(status)
-            
-    except Exception as e:
-        response_time = (time.time() - start_time) * 1000
-        health_monitor.record_api_call('/api/status', response_time, 500)
-        health_monitor.record_error('API_ERROR', 'STATUS_FAILED', str(e), 
-                                  {'endpoint': '/api/status'}, 'ERROR')
-        raise
-
-@app.route('/api/health')
-@handle_api_errors
-def get_health():
-    """Get comprehensive health status"""
-    start_time = time.time()
-    
-    try:
-        with ErrorContext("get_health"):
-            # Collect current metrics
-            metrics = health_monitor.collect_system_metrics(capture_system)
-            health_status = health_monitor.get_health_status()
-            
-            # Record API call metrics
-            response_time = (time.time() - start_time) * 1000
-            health_monitor.record_api_call('/api/health', response_time, 200)
-            
-            return jsonify(health_status)
-            
-    except Exception as e:
-        response_time = (time.time() - start_time) * 1000
-        health_monitor.record_api_call('/api/health', response_time, 500)
-        health_monitor.record_error('API_ERROR', 'HEALTH_CHECK_FAILED', str(e), 
-                                  {'endpoint': '/api/health'}, 'ERROR')
-        raise
-
-@app.route('/api/metrics/export')
-@handle_api_errors
-def export_metrics():
-    """Export system metrics"""
-    start_time = time.time()
-    
-    try:
-        with ErrorContext("export_metrics"):
-            hours = request.args.get('hours', 24, type=int)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'metrics_export_{timestamp}.json'
-            filepath = os.path.join(capture_system.current_folder, filename)
-            
-            success = health_monitor.export_metrics(filepath, hours)
-            
-            # Record API call metrics
-            response_time = (time.time() - start_time) * 1000
-            status_code = 200 if success else 500
-            health_monitor.record_api_call('/api/metrics/export', response_time, status_code)
-            
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': f'Metrics exported to {filename}',
-                    'filepath': filepath,
-                    'hours': hours
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'message': 'Failed to export metrics'
-                }), 500
-                
-    except Exception as e:
-        response_time = (time.time() - start_time) * 1000
-        health_monitor.record_api_call('/api/metrics/export', response_time, 500)
-        health_monitor.record_error('API_ERROR', 'METRICS_EXPORT_FAILED', str(e), 
-                                  {'endpoint': '/api/metrics/export'}, 'ERROR')
-        raise
-
-@app.route('/api/product/set', methods=['POST'])
-@handle_api_errors
-def set_product():
-    """Set product name and create product-specific folder"""
-    with ErrorContext("product_set_api"):
-        try:
-            data = request.get_json()
-            if not data or 'product_name' not in data:
-                raise ValidationError("Missing product_name in request")
-            
-            product_name = data['product_name'].strip()
-            if not product_name:
-                raise ValidationError("Product name cannot be empty")
-            
-            # Sanitize product name for folder creation
-            safe_product_name = "".join(c for c in product_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_product_name = safe_product_name.replace(' ', '_')
-            
-            # Create timestamp for unique session
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Create product folder path
-            base_folder = capture_system.current_folder or "/Users/saumil/Desktop/360Photo/p"
-            product_folder = os.path.join(base_folder, f"{safe_product_name}_{timestamp}")
-            
-            # Create the folder
-            os.makedirs(product_folder, exist_ok=True)
-            
-            # Update current folder to the product folder
-            capture_system.current_folder = product_folder
-            capture_system.current_product = product_name
-            
-            logger.logger.info(f"Product set: {product_name}, folder: {product_folder}")
-            
-            return jsonify({
-                'success': True,
-                'message': f'Product "{product_name}" set successfully',
-                'product_name': product_name,
-                'folder_path': product_folder,
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            raise StorageError(f"Failed to set product: {str(e)}")
-
-@app.route('/api/platform/rotate', methods=['POST'])
-def rotate_platform():
-    """Rotate platform - placeholder for hardware integration"""
-    # TODO: Integrate with actual rotating platform hardware
-    # This could be Arduino, stepper motor controller, etc.
-    time.sleep(0.5)  # Simulate rotation time
-    return jsonify({'success': True, 'message': 'Platform rotated'})
-
-@app.route('/api/session/start', methods=['POST'])
-def start_session():
-    """Start automated capture session with precise 1-minute duration"""
-    try:
-        data = request.get_json() or {}
-        capture_rate = data.get('captureRate', 24)
-        
-        # Validate capture rate
-        if capture_rate not in [24, 36, 72]:
-            return jsonify({
-                'success': False,
-                'message': 'Invalid capture rate. Must be 24, 36, or 72 frames per minute.'
-            }), 400
-        
-        # Duration is always 1 minute (60 seconds)
-        success, message = capture_system.start_capture_session(capture_rate, duration_minutes=1)
-        
-        if success:
-            # Calculate precise intervals for validation
-            interval = 60.0 / capture_rate
-            return jsonify({
-                'success': True,
-                'message': message,
-                'session_info': {
-                    'duration': 60,  # Always 1 minute
-                    'capture_rate': capture_rate,
-                    'expected_captures': capture_rate,
-                    'interval_seconds': round(interval, 3),
-                    'validation_enabled': True
-                }
-            })
-        else:
-            return jsonify({'success': False, 'message': message}), 400
-            
-    except Exception as e:
-        logger.logger.error(f"Failed to start session: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to start session: {str(e)}'
-        }), 500
-
-@app.route('/api/session/stop', methods=['POST'])
-def stop_session():
-    """Stop automated capture session with validation results"""
-    try:
-        result = capture_system.stop_capture_session()
-        
-        if len(result) == 3:  # New format with validation
-            success, message, validation = result
-            if success:
-                return jsonify({
-                    'success': True,
-                    'message': message,
-                    'validation': validation
-                })
-            else:
-                return jsonify({'success': False, 'message': message}), 400
-        else:  # Fallback for old format
-            success, message = result
-            return jsonify({'success': success, 'message': message})
-            
-    except Exception as e:
-        logger.logger.error(f"Failed to stop session: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to stop session: {str(e)}'
-        }), 500
-
-@app.route('/api/session/status', methods=['GET'])
-def session_status():
-    """Get current session status"""
-    try:
-        status = capture_system.get_session_status()
-        return jsonify({
-            'success': True,
-            'status': status
-        })
-    except Exception as e:
-        logger.logger.error(f"Failed to get session status: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to get session status: {str(e)}'
-        }), 500
-
-def add_performance_overlay(frame):
-    """Add real-time performance metrics overlay to frame"""
-    try:
-        overlay_frame = frame.copy()
-        height, width = overlay_frame.shape[:2]
-        
-        # Create semi-transparent overlay area
-        overlay = overlay_frame.copy()
-        cv2.rectangle(overlay, (10, 10), (300, 120), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.7, overlay_frame, 0.3, 0, overlay_frame)
-        
-        # Add performance text
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.5
-        color = (0, 255, 0)  # Green
-        thickness = 1
-        
-        # FPS
-        fps_text = f"FPS: {capture_system.current_fps:.1f}"
-        cv2.putText(overlay_frame, fps_text, (15, 30), font, font_scale, color, thickness)
-        
-        # Resolution
-        res_text = f"Resolution: {capture_system.camera_resolution[0]}x{capture_system.camera_resolution[1]}"
-        cv2.putText(overlay_frame, res_text, (15, 50), font, font_scale, color, thickness)
-        
-        # Latency
-        latency_text = f"Latency: {capture_system.frame_latency:.1f}ms"
-        cv2.putText(overlay_frame, latency_text, (15, 70), font, font_scale, color, thickness)
-        
-        # Connection status
-        if capture_system.connection_errors > 0:
-            status_color = (0, 165, 255)  # Orange
-            status_text = f"Errors: {capture_system.connection_errors}"
-        else:
-            status_color = (0, 255, 0)  # Green
-            status_text = "Status: OK"
-        cv2.putText(overlay_frame, status_text, (15, 90), font, font_scale, status_color, thickness)
-        
-        # Timestamp
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        cv2.putText(overlay_frame, timestamp, (15, 110), font, font_scale, (255, 255, 255), thickness)
-        
-        return overlay_frame
-    except Exception as e:
-        logger.log_error(e, {'operation': 'performance_overlay'})
-        return frame
-
-def log_performance_metrics():
-    """Log detailed performance metrics"""
-    try:
-        avg_frame_time = 0
-        if capture_system.frame_times:
-            avg_frame_time = sum(capture_system.frame_times) / len(capture_system.frame_times)
-        
-        logger.logger.info("Real-time performance metrics", extra={
-            'context': {
-                'fps': round(capture_system.current_fps, 2),
-                'frame_latency_ms': round(capture_system.frame_latency, 2),
-                'avg_frame_time_ms': round(avg_frame_time * 1000, 2),
-                'connection_errors': capture_system.connection_errors,
-                'camera_resolution': capture_system.camera_resolution,
-                'reconnection_attempts': capture_system.reconnection_attempts
-            }
-        })
-    except Exception as e:
-        logger.log_error(e, {'operation': 'performance_logging'})
-
-def calculate_camera_health_score():
-    """Calculate camera health score (0-100)"""
-    try:
-        score = 100
-        
-        # Deduct points for connection errors
-        score -= min(capture_system.connection_errors * 10, 50)
-        
-        # Deduct points for low FPS
-        if capture_system.current_fps < 15:
-            score -= 20
-        elif capture_system.current_fps < 25:
-            score -= 10
-        
-        # Deduct points for high latency
-        if capture_system.frame_latency > 100:
-            score -= 20
-        elif capture_system.frame_latency > 50:
-            score -= 10
-        
-        # Deduct points for reconnection attempts
-        score -= min(capture_system.reconnection_attempts * 15, 30)
-        
-        return max(0, score)
-    except Exception:
-        return 0
-
-def attempt_camera_reconnection():
-    """Attempt to reconnect to camera"""
-    try:
-        if capture_system.reconnection_attempts < capture_system.max_reconnection_attempts:
-            capture_system.reconnection_attempts += 1
-            logger.logger.info(f"Attempting camera reconnection #{capture_system.reconnection_attempts}")
-            
-            # Try to reinitialize camera
-            if capture_system.initialize_camera(capture_system.camera_index):
-                capture_system.connection_errors = 0
-                capture_system.reconnection_attempts = 0
-                logger.logger.info("Camera reconnection successful")
-            else:
-                logger.logger.warning(f"Camera reconnection attempt #{capture_system.reconnection_attempts} failed")
-    except Exception as e:
-        logger.log_error(e, {'operation': 'camera_reconnection'})
-
-def create_status_placeholder_frame():
-    """Create a placeholder frame with status information"""
-    try:
-        # Create a simple status image
-        img = np.zeros((480, 640, 3), dtype=np.uint8)
-        img.fill(50)  # Dark gray background
-        
-        # Add status text
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        cv2.putText(img, "Camera Disconnected", (180, 200), font, 1, (0, 0, 255), 2)
-        cv2.putText(img, "Attempting to reconnect...", (160, 250), font, 0.7, (255, 255, 0), 2)
-        cv2.putText(img, f"Errors: {capture_system.connection_errors}", (250, 300), font, 0.6, (255, 255, 255), 1)
-        cv2.putText(img, f"Attempts: {capture_system.reconnection_attempts}", (240, 330), font, 0.6, (255, 255, 255), 1)
-        
-        # Encode as JPEG
-        ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ret:
-            return buffer.tobytes()
-        else:
-            # Fallback minimal JPEG
-            return b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x11\x08\x00\xf0\x01@\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x14\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xaa\xff\xd9'
-    except Exception as e:
-        logger.log_error(e, {'operation': 'placeholder_frame_creation'})
-        return b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x11\x08\x00\xf0\x01@\x03\x01"\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x14\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xaa\xff\xd9'
-
-if __name__ == '__main__':
-    # Enhanced startup with better USB camera detection
-    try:
-        # Try to detect and initialize the best available USB camera
-        logger.logger.info("Starting application with enhanced USB camera detection...")
-        
-        # First, scan for available cameras
-        cameras = []
-        backends_to_try = [
-            ('AVFoundation', cv2.CAP_AVFOUNDATION),
-            ('V4L2', cv2.CAP_V4L2),
-            ('DirectShow', cv2.CAP_DSHOW),
-            ('Default', cv2.CAP_ANY)
-        ]
-        
-        for i in range(10):
-            for backend_name, backend_id in backends_to_try:
-                try:
-                    cap = cv2.VideoCapture(i, backend_id)
-                    if cap.isOpened():
+                    try:
+                        cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  w)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                        cap.set(cv2.CAP_PROP_FPS,          fps)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
                         ret, frame = cap.read()
                         if ret and frame is not None:
-                            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            is_likely_usb = i > 0 or width >= 1280
-                            cameras.append({
-                                'index': i,
-                                'backend': backend_name,
-                                'resolution': (width, height),
-                                'is_usb_likely': is_likely_usb
-                            })
-                            logger.logger.info(f"Detected camera {i} with {backend_name}: {width}x{height} (USB likely: {is_likely_usb})")
-                            break
+                            return cap
+                    except Exception:
+                        pass
                     cap.release()
+        return None
+
+    def scan_cameras(self, max_index=20):
+        if is_macos():
+            backends = [cv2.CAP_AVFOUNDATION, cv2.CAP_ANY]
+        elif is_windows():
+            backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]
+        else:
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+
+        found = []
+        for i in range(max_index):
+            opened = False
+            for be in backends:
+                cap = self._try_formats_and_resolutions(i, be)
+                if cap:
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    found.append({"index": i, "name": f"Camera {i} ({w}x{h})"})
+                    cap.release()
+                    opened = True
+                    break
+            if not opened:
+                logger.debug(f"Index {i} could not be opened on any backend.")
+        log_info(f"Camera scan: found {len(found)} device(s)")
+        return found
+
+    def _open_camera(self, index):
+        if is_macos():
+            backends = [cv2.CAP_AVFOUNDATION, cv2.CAP_ANY]
+        elif is_windows():
+            backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]
+        else:
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+
+        for be in backends:
+            cap = self._try_formats_and_resolutions(index, be)
+            if cap:
+                self.camera_index = index
+                self._apply_safe_video_params(cap)
+                return cap
+        return None
+
+    def start_reader(self, index=0):
+        self.stop_reader()
+        self.cap = self._open_camera(index)
+        if not self.cap:
+            self.last_error = f"Failed to open camera {index}"
+            log_err(self.last_error)
+            return False
+        self.reader_stop.clear()
+        self.reader_thread = threading.Thread(target=self._reader_loop, name="CameraReader", daemon=True)
+        self.reader_thread.start()
+        log_info(f"Camera reader started on index {index}")
+        return True
+
+    def stop_reader(self):
+        if self.reader_thread and self.reader_thread.is_alive():
+            self.reader_stop.set()
+            self.reader_thread.join(timeout=2)
+        self.reader_thread = None
+        self.reader_stop.clear()
+
+    def _reader_loop(self):
+        stall_limit = 1.0  # seconds
+        while not self.reader_stop.is_set():
+            try:
+                if not self.cap or not self.cap.isOpened():
+                    time.sleep(0.1)
+                    continue
+                ret, frame = self.cap.read()
+                now = time.time()
+                if ret and frame is not None:
+                    with self.frame_lock:
+                        self.latest_frame = frame
+                    self.last_ok_ts = now
+                else:
+                    if (now - self.last_ok_ts) > stall_limit:
+                        log_warn("Camera stalled; reopening fast…")
+                        idx = self.camera_index
+                        try:
+                            if self.cap: self.cap.release()
+                        except Exception:
+                            pass
+                        self.cap = self._open_camera(idx)
+                        self.last_ok_ts = now
+                    else:
+                        time.sleep(0.01)
+            except Exception as e:
+                self.last_error = f"Reader error: {e}"
+                log_err(self.last_error)
+                time.sleep(0.05)
+
+    def get_latest_frame(self):
+        with self.frame_lock:
+            return None if self.latest_frame is None else self.latest_frame.copy()
+
+    def wait_for_frame(self, timeout=5.0):
+        end = time.time() + float(timeout)
+        while time.time() < end:
+            fr = self.get_latest_frame()
+            if fr is not None:
+                return True
+            time.sleep(0.02)
+        return False
+
+    # ---------- Async saver ----------
+    def _saver_loop(self):
+        while not self.saver_stop.is_set():
+            try:
+                if not self.save_q:
+                    time.sleep(0.002)
+                    continue
+                outdir, fname, frame = self.save_q.popleft()
+                fpath = Path(outdir) / fname
+                cv2.imwrite(str(fpath), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            except Exception as e:
+                self.last_error = f"saver error: {e}"
+                log_err(self.last_error)
+
+    # ---------- Capture ----------
+    def _resolve_save_dir(self):
+        return self.session_output_dir if (self.session_active and self.session_output_dir) else self.current_folder
+
+    def _write_manifest_entry(self, outdir: Path, filename: str):
+        csv_path = outdir / "captures.csv"
+        new_file = not csv_path.exists()
+        try:
+            with csv_path.open("a", newline="") as f:
+                w = csv.writer(f)
+                if new_file:
+                    w.writerow(["timestamp", "filename", "product", "camera_index", "session_id"])
+                w.writerow([ts_now(), filename, self.session_product_name or "", self.camera_index, self.session_id or ""])
+        except Exception as e:
+            self.last_error = f"CSV write error: {e}"
+            log_err(self.last_error)
+
+    def _ensure_session_meta(self, outdir: Path):
+        meta = {
+            "session_id": self.session_id,
+            "product": self.session_product_name or "",
+            "rate_per_min": self.session_rate,
+            "start_time_iso": iso_now(),
+            "duration_seconds": self.session_duration_s,
+            "camera_index": self.camera_index,
+            "created_at": ts_now(),
+        }
+        try:
+            (outdir / "session_meta.json").write_text(json.dumps(meta, indent=2))
+        except Exception as e:
+            self.last_error = f"Meta write error: {e}"
+            log_err(self.last_error)
+
+    def capture_image(self):
+        frame = self.get_latest_frame()
+        if frame is None:
+            self.wait_for_frame(timeout=1.0)
+            frame = self.get_latest_frame()
+        if frame is None and self.cap and self.cap.isOpened():
+            ret, fr = self.cap.read()
+            frame = fr if ret else None
+        if frame is None:
+            return False, "No camera frame. Connect camera and ensure preview shows an image."
+
+        try:
+            ts_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            fname = f"capture_{self.total_captures:06d}_{ts_str}.jpg"
+            outdir = Path(self._resolve_save_dir())
+            outdir.mkdir(parents=True, exist_ok=True)
+
+            # enqueue async write
+            if len(self.save_q) >= self.save_q.maxlen:
+                # queue full → drop oldest (already handled by deque), but we can log
+                log_warn("Save queue full; dropping oldest frame to keep up.")
+            self.save_q.append((str(outdir), fname, frame.copy()))
+            self.total_captures += 1
+
+            if self.session_active and self.session_output_dir:
+                self._write_manifest_entry(outdir, fname)
+            return True, str(outdir / fname)
+        except Exception as e:
+            self.last_error = str(e)
+            return False, self.last_error
+
+    # ---------- Storage ----------
+    def get_storage_devices(self):
+        devs = []
+        try:
+            for part in psutil.disk_partitions(all=True):
+                mp = part.mountpoint
+                try: u = psutil.disk_usage(mp)
+                except Exception: continue
+                if is_macos() and mp in ["/", "/System", "/private/var/vm"]:
+                    continue
+                devs.append({
+                    "device": part.device or mp,
+                    "mountpoint": mp,
+                    "fstype": part.fstype or "",
+                    "total": u.total, "used": u.used, "free": u.free,
+                    "percent": round(u.used/u.total*100, 1),
+                    "free_gb": round(u.free/1024**3, 2),
+                })
+        except Exception as e:
+            log_warn(f"disk_partitions error: {e}")
+
+        if is_windows():
+            by_mp = {d["mountpoint"]: d for d in devs}
+            for d in list_windows_drives():
+                by_mp[d["mountpoint"]] = d
+            devs = list(by_mp.values())
+
+        for root in extra_mount_roots():
+            try:
+                for child in root.iterdir():
+                    if child.is_dir():
+                        try:
+                            u = psutil.disk_usage(str(child))
+                            devs.append({
+                                "device": child.name,
+                                "mountpoint": str(child),
+                                "fstype": "external",
+                                "total": u.total, "used": u.used, "free": u.free,
+                                "percent": round(u.used/u.total*100, 1),
+                                "free_gb": round(u.free/1024**3, 2),
+                            })
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # Always add home
+        try:
+            home = str(Path.home())
+            u = psutil.disk_usage(home)
+            devs.insert(0, {
+                "device": "User Home",
+                "mountpoint": home,
+                "fstype": "User",
+                "total": u.total, "used": u.used, "free": u.free,
+                "percent": round(u.used/u.total*100, 1),
+                "free_gb": round(u.free/1024**3, 2),
+            })
+        except Exception:
+            pass
+
+        uniq = {d["mountpoint"]: d for d in devs}
+        out = list(uniq.values())
+        out.sort(key=lambda x: (-x["free"], x["mountpoint"]))
+        return out
+
+    def set_storage_location(self, path):
+        try:
+            p = Path(path).expanduser().resolve()
+            p.mkdir(parents=True, exist_ok=True)
+            self.current_folder = str(p)
+            log_info(f"Storage set to: {self.current_folder}")
+            return True, self.current_folder
+        except Exception as e:
+            self.last_error = str(e)
+            log_err(f"Storage set error: {e}")
+            return False, self.last_error
+
+    def list_folder(self, folder):
+        try:
+            p = Path(folder).expanduser().resolve()
+            if not p.exists():
+                return {"path": str(p), "parent": None, "contents": []}
+            parent = str(p.parent) if p != p.parent else None
+            rows = []
+            for item in sorted(p.iterdir(), key=lambda q: (not q.is_dir(), q.name.lower())):
+                try:
+                    st = item.stat()
+                    if item.is_dir() or item.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+                        rows.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "is_dir": item.is_dir(),
+                            "size": 0 if item.is_dir() else st.st_size,
+                            "modified": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        })
                 except Exception:
                     continue
-        
-        # Try to initialize the best USB camera
-        usb_cameras = [cam for cam in cameras if cam['is_usb_likely']]
-        if usb_cameras:
-            # Sort by resolution (higher is better)
-            usb_cameras.sort(key=lambda x: x['resolution'][0] * x['resolution'][1], reverse=True)
-            best_camera = usb_cameras[0]
-            logger.logger.info(f"Attempting to initialize best USB camera: {best_camera['index']}")
-            capture_system.initialize_camera(best_camera['index'])
-            logger.logger.info("USB camera initialized successfully on startup")
-        elif cameras:
-            # Fallback to any available camera
-            best_camera = max(cameras, key=lambda x: x['resolution'][0] * x['resolution'][1])
-            logger.logger.info(f"No USB cameras found, using camera {best_camera['index']}")
-            capture_system.initialize_camera(best_camera['index'])
-            logger.logger.info("Camera initialized successfully on startup")
-        else:
-            logger.logger.warning("No cameras detected on startup")
-            logger.logger.info("Application will continue without camera - use 'Scan Cameras' to detect later")
-            
+            return {"path": str(p), "parent": parent, "contents": rows}
+        except Exception:
+            return {"path": str(folder), "parent": None, "contents": []}
+
+    # ---------- Session ----------
+    def _append_global_product_log(self, end_time_iso: str):
+        try:
+            with PRODUCT_LOG_CSV.open("a", newline="") as f:
+                w = csv.writer(f)
+                w.writerow([
+                    self.session_id or "",
+                    self.session_product_name or "",
+                    datetime.fromtimestamp(self.session_start_time).isoformat(timespec="seconds") if self.session_start_time else "",
+                    end_time_iso,
+                    self.session_captures,
+                    self.session_rate,
+                    self.session_duration_s if self.session_duration_s else "",
+                    self.session_output_dir or self.current_folder
+                ])
+        except Exception as e:
+            log_err(f"Product log write error: {e}")
+
+    def start_session(self, rate, duration_minutes=None, product_name=None):
+        with self.session_lock:
+            if self.session_active:
+                return False, "Session already active", None
+
+            # Ensure camera is running; auto-reconnect if needed
+            if not (self.cap and self.cap.isOpened()):
+                idx_try = [self.camera_index or 0]
+                if 0 not in idx_try: idx_try.append(0)
+                reconnected = False
+                for idx in idx_try:
+                    if self.start_reader(idx):
+                        reconnected = True
+                        break
+                if not reconnected:
+                    return False, "Could not initialize camera. Please scan & connect a camera.", None
+
+            # Warm up & ensure frames are flowing
+            if not self.wait_for_frame(timeout=5.0):
+                self.stop_reader()
+                if not self.start_reader(self.camera_index or 0) or not self.wait_for_frame(timeout=5.0):
+                    return False, "Camera connected but no frames arriving. Check permissions/cables/ports.", None
+
+            try: rate = int(rate)
+            except Exception: rate = 24
+            rate = max(1, min(300, rate))
+            self.session_rate = rate
+            self.session_duration_s = (duration_minutes * 60) if duration_minutes else None
+            self.session_start_time = time.time()
+            self.session_captures = 0
+            self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+            # Prepare product folder
+            self.session_product_name = (product_name or "").strip()
+            product_dir = None
+            if self.session_product_name:
+                safe = sanitize_product_name(self.session_product_name)
+                base = Path(self.current_folder) / safe
+                if base.exists():
+                    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    base = Path(self.current_folder) / f"{safe}_{stamp}"
+                base.mkdir(parents=True, exist_ok=True)
+                product_dir = str(base)
+                self.session_output_dir = product_dir
+                self._ensure_session_meta(Path(product_dir))
+            else:
+                self.session_output_dir = None
+
+            self.session_stop.clear()
+            self.session_active = True
+            self.session_thread = threading.Thread(target=self._session_worker, name="CaptureSession", daemon=True)
+            self.session_thread.start()
+            log_info(f"Session started: rate={self.session_rate}/min, duration_s={self.session_duration_s}, product={self.session_product_name or '-'}")
+            return True, f"Session started at {rate}/min", product_dir
+
+    def stop_session(self):
+        with self.session_lock:
+            if not self.session_active:
+                return False, "No active session"
+            self.session_active = False
+            self.session_stop.set()
+
+        if self.session_thread and self.session_thread.is_alive():
+            self.session_thread.join(timeout=2)
+
+        end_iso = iso_now()
+        self._append_global_product_log(end_iso)
+        msg = f"Session stopped. Captured {self.session_captures} images."
+        log_info(msg)
+
+        # clear per-session only (keep current_folder)
+        self.session_output_dir = None
+        self.session_product_name = None
+        self.session_id = None
+
+        return True, msg
+
+    def _session_worker(self):
+        interval = 60.0 / float(self.session_rate)
+        next_t = time.time()
+        while not self.session_stop.is_set():
+            if self.session_duration_s and (time.time() - self.session_start_time >= self.session_duration_s):
+                break
+            ok, path = self.capture_image()
+            if ok:
+                with self.session_lock:
+                    self.session_captures += 1
+                logger.debug(f"Captured: {path}")
+            next_t += interval
+            time.sleep(max(0.001, next_t - time.time()))
+        with self.session_lock:
+            self.session_active = False
+
+    def session_status(self):
+        with self.session_lock:
+            elapsed = int(time.time() - (self.session_start_time or time.time())) if self.session_active else 0
+            remaining = None
+            expected_total = None
+            percent = None
+            if self.session_duration_s:
+                remaining = max(0, int(self.session_duration_s - elapsed)) if self.session_active else 0
+                expected_total = int((self.session_duration_s / 60.0) * self.session_rate)
+                if expected_total > 0:
+                    percent = min(100, int((self.session_captures / expected_total) * 100))
+            return {
+                "active": self.session_active,
+                "captures": self.session_captures,
+                "elapsed": elapsed,
+                "rate": self.session_rate,
+                "duration": self.session_duration_s,
+                "remaining": remaining,
+                "expected_total": expected_total,
+                "percent": percent,
+                "session_output_dir": self.session_output_dir,
+            }
+
+system = CaptureSystem()
+
+# ---------------- UI ----------------
+HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>360° Product Capture</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#0f172a;color:#e5e7eb;margin:0}
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+.grid{display:grid;grid-template-columns:1fr 400px;gap:16px}
+.card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px}
+.btn{display:block;width:100%;padding:10px 12px;margin:6px 0;border-radius:8px;border:none;cursor:pointer;font-weight:600;background:#2563eb;color:#fff}
+.btn.alt{background:#334155}.btn.ok{background:#16a34a}.btn.warn{background:#ea580c}
+select,input{width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;margin:6px 0}
+.row{display:flex;gap:8px;align-items:center}
+.badge{display:inline-block;background:#0b1220;border:1px solid #334155;color:#93c5fd;padding:4px 8px;border-radius:999px;font-size:12px}
+.preview{height:420px;background:#000;border-radius:10px;overflow:hidden}
+.preview img{width:100%;height:100%;object-fit:contain}
+.browser{max-height:230px;overflow:auto;border:1px solid #334155;border-radius:8px;padding:8px;background:#0b1220}
+.item{display:flex;gap:8px;align-items:center;background:#0b1220;border:1px solid #1f2937;border-radius:8px;padding:8px;margin:6px 0;cursor:pointer}
+.item:hover{background:#0c1426}.small{font-size:12px;color:#94a3b8;margin-left:auto}.up{color:#f59e0b}
+.progress{background:#0b1220;border:1px solid #334155;border-radius:999px;height:14px;overflow:hidden}
+.bar{background:#22c55e;height:100%;width:0%}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px;font-size:14px}
+.kv div:nth-child(odd){color:#a5b4fc}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style></head>
+<body>
+<div class="wrap">
+  <h2>📸 360° Product Capture</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div>Live Preview</div><span id="camBadge" class="badge">Camera: disconnected</span>
+      </div>
+      <div class="preview"><img id="preview" src="/video_feed" alt="preview"></div>
+      <div class="kv" style="margin-top:8px">
+        <div>Session:</div><div id="sessState">inactive</div>
+        <div>Images:</div><div><span id="imgCount">0</span><span id="imgTargetWrap" style="display:none"> / <span id="imgTarget">0</span></span></div>
+        <div>Rate:</div><div><span id="rateTxt">0</span>/min</div>
+        <div>Elapsed:</div><div id="elapsedTxt">0s</div>
+        <div id="remRow" style="display:none">Remaining:</div><div id="remainTxt" style="display:none">0s</div>
+      </div>
+      <div class="progress" style="margin-top:8px" id="progWrap"><div class="bar" id="progBar"></div></div>
+      <div style="margin-top:8px;font-size:12px;color:#9ca3af">Last error: <span id="lastErr">-</span></div>
+      <button class="btn warn" onclick="capture()">📸 Capture Image</button>
+    </div>
+    <div class="card">
+      <h3>Camera</h3>
+      <button class="btn alt" onclick="scan()">🔍 Scan Cameras</button>
+      <select id="camSelect"></select>
+      <button class="btn ok" onclick="connectCam()">🔌 Connect</button>
+
+      <h3 style="margin-top:12px">Storage</h3>
+      <button class="btn alt" onclick="loadStorage()">🔄 Refresh Storage</button>
+      <select id="storageSelect"></select>
+      <button class="btn ok" onclick="selectStorage()">📁 Use Selected</button>
+      <div class="row"><input id="manualPath" placeholder="Or paste a path e.g. /Volumes/MyHDD/Captures"><button class="btn" style="width:auto" onclick="useManual()">Set</button></div>
+      <div class="row"><input id="currentPath" readonly><button class="btn" style="width:auto" onclick="setToCurrent()">Use</button></div>
+      <div class="browser" id="browser"></div>
+      <div class="row"><input id="newFolder" placeholder="New folder name"><button class="btn" style="width:auto" onclick="mkfolder()">Create</button></div>
+
+      <h3 style="margin-top:12px">Automated Session</h3>
+      <input id="productName" placeholder="Product Name (folder will be created)">
+      <select id="rate"><option value="12">12/min</option><option value="24" selected>24/min</option><option value="60">60/min</option><option value="120">120/min</option><option value="180">180/min</option></select>
+      <input id="dur" type="number" placeholder="Duration (minutes, optional)" min="1" max="600">
+      <div class="row"><button id="startBtn" class="btn ok" onclick="start()">▶ Start</button><button id="stopBtn" class="btn alt" onclick="stop()" disabled>⏹ Stop</button></div>
+    </div>
+  </div>
+</div>
+<script>
+async function jget(u){const r=await fetch(u);return r.json()}
+async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+
+let currentPath = "";
+
+async function init(){
+  await loadStorage();
+  await statusTick();
+  setInterval(statusTick, 1500);
+  setInterval(sessionTick, 500);
+}
+async function statusTick(){
+  const s = await jget('/api/status');
+  document.getElementById('camBadge').textContent = s.camera_connected ? 'Camera: connected' : 'Camera: disconnected';
+  document.getElementById('lastErr').textContent = s.last_error || '-';
+  if(!currentPath && s.current_folder){ currentPath=s.current_folder; await loadFolder(currentPath); }
+}
+async function scan(){
+  const r = await jget('/api/camera/scan'); const sel=document.getElementById('camSelect'); sel.innerHTML="";
+  if(r.success && r.cameras.length){ r.cameras.forEach(c=>{const o=document.createElement('option');o.value=c.index;o.textContent=c.name;sel.appendChild(o)}) }
+  else { const o=document.createElement('option');o.value="";o.textContent="No cameras found";sel.appendChild(o) }
+}
+async function connectCam(){
+  const val = document.getElementById('camSelect').value || 0;
+  const r = await jpost('/api/camera/init', {camera_index: parseInt(val)});
+  alert(r.message || (r.success?'Connected':'Failed')); await statusTick();
+}
+async function capture(){
+  const r = await jpost('/api/capture', {}); alert(r.success?('Captured:\\n'+r.message):('Failed:\\n'+r.message)); await loadFolder(currentPath);
+}
+async function loadStorage(){
+  const list = await jget('/api/storage'); const sel=document.getElementById('storageSelect'); sel.innerHTML="";
+  list.forEach(d=>{const o=document.createElement('option');o.value=d.mountpoint;o.textContent=`${d.device} (${d.free_gb} GB free) — ${d.mountpoint}`;sel.appendChild(o)})
+}
+async function selectStorage(){
+  const mp = document.getElementById('storageSelect').value; if(!mp) return;
+  const r = await jpost('/api/storage/select', {path: mp});
+  if(r.success){ currentPath=r.path; document.getElementById('currentPath').value=currentPath; await loadFolder(currentPath); } else alert('Failed: '+r.message)
+}
+async function useManual(){
+  const p=document.getElementById('manualPath').value.trim(); if(!p) return;
+  const r = await jpost('/api/storage/select', {path: p});
+  if(r.success){ currentPath=r.path; document.getElementById('currentPath').value=currentPath; await loadFolder(currentPath); } else alert('Failed: '+r.message)
+}
+async function setToCurrent(){
+  const p=document.getElementById('currentPath').value.trim(); if(!p) return;
+  const r = await jpost('/api/storage/select', {path: p}); if(r.success){ currentPath=r.path; await loadFolder(currentPath); } else alert('Failed: '+r.message)
+}
+async function loadFolder(path){
+  const r = await jget('/api/folder?path='+encodeURIComponent(path||currentPath||""));
+  currentPath = r.path || currentPath; document.getElementById('currentPath').value = currentPath;
+  const box=document.getElementById('browser'); box.innerHTML="";
+  if(r.parent){ const up=document.createElement('div'); up.className='item'; up.innerHTML='<span class="up">⬆️ .. (Up)</span>'; up.onclick=()=>loadFolder(r.parent); box.appendChild(up); }
+  if(r.contents && r.contents.length){
+    r.contents.forEach(it=>{ const div=document.createElement('div'); div.className='item';
+      div.innerHTML = `<span>${it.is_dir?'📁':'🖼️'}</span><span>${it.name}</span><span class="small">${it.is_dir?'Folder':(Math.round(it.size/1024)+' KB')}</span>`;
+      if(it.is_dir){ div.onclick=()=>loadFolder(it.path) } box.appendChild(div);
+    })
+  }else{ const p=document.createElement('div');p.className='item';p.textContent='(empty)';box.appendChild(p) }
+}
+async function start(){
+  const rate = parseInt(document.getElementById('rate').value);
+  const durv = document.getElementById('dur').value.trim();
+  const product = document.getElementById('productName').value.trim();
+
+  // If camera is disconnected, try reconnect using selected index
+  const status = await jget('/api/status');
+  if(!status.camera_connected){
+    const sel = document.getElementById('camSelect');
+    const idx = sel && sel.value ? parseInt(sel.value) : 0;
+    const rec = await jpost('/api/camera/reconnect', {camera_index: idx});
+    if(!rec.success){
+      alert('Camera reconnect failed. Please Scan → Connect first.');
+      return;
+    }
+  }
+
+  const payload = {rate}; if(durv) payload.duration = parseInt(durv); if(product) payload.product_name = product;
+  const r = await jpost('/api/session/start', payload);
+  if(r.success){
+    document.getElementById('startBtn').disabled=true; document.getElementById('stopBtn').disabled=false;
+    if(r.product_dir){ currentPath=r.product_dir; document.getElementById('currentPath').value=currentPath; await loadFolder(currentPath); alert('Saving to:\\n'+r.product_dir); }
+  }else{
+    alert('Failed to start: ' + (r.message||'')); return;
+  }
+  sessionTick();
+}
+async function stop(){
+  const r = await jpost('/api/session/stop', {}); document.getElementById('startBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
+  alert(r.message||'Stopped');
+  sessionTick(); await loadFolder(currentPath);
+}
+async function sessionTick(){
+  const s = await jget('/api/session/status');
+  document.getElementById('sessState').textContent = s.active? 'Active' : 'Inactive';
+  document.getElementById('imgCount').textContent = s.captures||0;
+  document.getElementById('rateTxt').textContent = s.rate||0;
+  document.getElementById('elapsedTxt').textContent = (s.elapsed!=null)? (s.elapsed+'s'):'0s';
+
+  const targetWrap = document.getElementById('imgTargetWrap');
+  const imgTarget = document.getElementById('imgTarget');
+  const remRow = document.getElementById('remRow');
+  const remainTxt = document.getElementById('remainTxt');
+  const progWrap = document.getElementById('progWrap');
+  const progBar  = document.getElementById('progBar');
+
+  if(s.expected_total!=null){
+    targetWrap.style.display='inline';
+    imgTarget.textContent = s.expected_total;
+    remRow.style.display = 'block';
+    remainTxt.style.display = 'block';
+    remainTxt.textContent = (s.remaining!=null)? (s.remaining+'s'):'0s';
+    progWrap.style.display = 'block';
+    const pct = (s.percent!=null)? s.percent : 0;
+    progBar.style.width = pct + '%';
+  }else{
+    targetWrap.style.display='none';
+    remRow.style.display = 'none';
+    remainTxt.style.display = 'none';
+    progWrap.style.display = 'none';
+    progBar.style.width = '0%';
+  }
+}
+init();
+</script>
+</body></html>
+"""
+
+# ---------------- Routes ----------------
+@app.route("/")
+def index():
+    return HTML
+
+@app.route("/video_feed")
+def video_feed():
+    def gen():
+        while True:
+            frame = system.get_latest_frame()
+            if frame is None:
+                time.sleep(0.05)
+                continue
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if not ok:
+                time.sleep(0.02); continue
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
+    return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+# ---- Camera APIs ----
+@app.route("/api/camera/scan")
+def api_camera_scan():
+    try:
+        cams = system.scan_cameras(max_index=12)
+        return jsonify({"success": True, "cameras": cams})
     except Exception as e:
-        logger.logger.warning(f"Camera initialization failed on startup: {e}")
-        logger.logger.info("Application will continue without camera - camera can be initialized later via API")
-    
-    # Run Flask app
-    logger.logger.info("Starting Flask application on http://0.0.0.0:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+        return jsonify({"success": False, "message": str(e), "cameras": []})
+
+@app.route("/api/camera/init", methods=["POST"])
+def api_camera_init():
+    data = request.get_json() or {}
+    idx = int(data.get("camera_index", 0))
+    ok = system.start_reader(idx)
+    return jsonify({"success": ok, "message": "Camera initialized" if ok else "Failed to initialize camera"})
+
+@app.route("/api/camera/reconnect", methods=["POST"])
+def api_camera_reconnect():
+    data = request.get_json() or {}
+    idx = int(data.get("camera_index", system.camera_index or 0))
+    ok = system.start_reader(idx)
+    return jsonify({"success": ok, "message": "Reconnected" if ok else "Reconnect failed"})
+
+# ---- Capture ----
+@app.route("/api/capture", methods=["POST"])
+def api_capture():
+    ok, msg = system.capture_image()
+    return jsonify({"success": ok, "message": msg})
+
+# ---- Storage ----
+@app.route("/api/storage")
+def api_storage():
+    return jsonify(system.get_storage_devices())
+
+@app.route("/api/storage/select", methods=["POST"])
+def api_storage_select():
+    data = request.get_json() or {}
+    path = data.get("path") or data.get("mountpoint")
+    if not path:
+        return jsonify({"success": False, "message": "No path provided"})
+    ok, p = system.set_storage_location(path)
+    return jsonify({"success": ok, "path": p if ok else None, "message": "OK" if ok else p})
+
+@app.route("/api/folder")
+def api_folder():
+    folder = request.args.get("path", system.current_folder)
+    return jsonify(system.list_folder(folder))
+
+@app.route("/api/folder/create", methods=["POST"])
+def api_folder_create():
+    data = request.get_json() or {}
+    base = data.get("path", system.current_folder)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"success": False, "message": "Invalid folder name"})
+    try:
+        p = Path(base).expanduser().resolve() / name
+        p.mkdir(parents=True, exist_ok=True)
+        return jsonify({"success": True, "message": str(p)})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+# ---- Session ----
+@app.route("/api/session/start", methods=["POST"])
+def api_session_start():
+    data = request.get_json() or {}
+    rate = data.get("rate", 24)
+    duration = data.get("duration")
+    product = data.get("product_name")
+    ok, msg, prod_dir = system.start_session(rate, duration, product)
+    return jsonify({"success": ok, "message": msg, "product_dir": prod_dir})
+
+@app.route("/api/session/stop", methods=["POST"])
+def api_session_stop():
+    ok, msg = system.stop_session()
+    return jsonify({"success": ok, "message": msg})
+
+@app.route("/api/session/status")
+def api_session_status():
+    return jsonify(system.session_status())
+
+# ---- Status ----
+@app.route("/api/status")
+def api_status():
+    cam_ok = False
+    try:
+        cam_ok = system.cap is not None and system.cap.isOpened()
+    except Exception:
+        cam_ok = False
+    return jsonify({
+        "camera_connected": cam_ok,
+        "current_folder": system.current_folder,
+        "capture_count": system.total_captures,
+        "session_time": int(time.time() - system.session_start_time) if system.session_start_time else 0,
+        "last_error": system.last_error
+    })
+
+if __name__ == "__main__":
+    log_info("Starting 360° Product Capture System…")
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
