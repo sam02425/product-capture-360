@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>360° Product Capture (TS)</title>
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,#0b1020,#0f172a 40%);color:#e5e7eb;margin:0}
+      .wrap{max-width:1200px;margin:0 auto;padding:20px}
+      h2{display:flex;align-items:center;gap:10px;margin:0 0 12px 0;font-weight:700}
+      .grid{display:grid;grid-template-columns:1fr 420px;gap:16px}
+      .card{background:#0f172a;border:1px solid #1f2937;border-radius:16px;padding:16px;box-shadow:0 6px 20px rgba(0,0,0,0.25)}
+      .btn{display:block;width:100%;padding:12px 14px;margin:6px 0;border-radius:10px;border:1px solid #1f3a78;cursor:pointer;font-weight:700;background:#2563eb;color:#fff;transition:transform .08s ease,opacity .15s ease}
+      .btn:hover{transform:translateY(-1px);opacity:.95}
+      .btn.alt{background:#1f2937;border-color:#334155}
+      .btn.ok{background:#16a34a;border-color:#166534}
+      .btn.warn{background:#ea580c;border-color:#7c2d12}
+      select,input{width:100%;padding:10px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;margin:6px 0}
+      input[type="color"]{height:40px;padding:0;border:none}
+      .row{display:flex;gap:8px;align-items:center}
+      .row.wrap{flex-wrap:wrap}
+      .badge{display:inline-block;background:#0b1220;border:1px solid #334155;color:#93c5fd;padding:4px 8px;border-radius:999px;font-size:12px}
+      .preview{height:440px;background:#000;border-radius:14px;overflow:hidden;border:1px solid #1f2937}
+      .preview img{width:100%;height:100%;object-fit:contain}
+      .browser{max-height:220px;overflow:auto;border:1px solid #334155;border-radius:12px;padding:8px;background:#0b1220}
+      .item{display:flex;gap:8px;align-items:center;background:#0b1220;border:1px solid #1f2937;border-radius:10px;padding:10px;margin:6px 0;cursor:pointer}
+      .item:hover{background:#0c1426}
+      .section-title{margin:8px 0 6px 0;font-weight:700}
+      @media (max-width: 980px){ .grid{grid-template-columns:1fr} }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h2>📸 360° Product Capture (TypeScript Fastify)</h2>
+      <div class="grid">
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <div>Live Preview</div><span id="camBadge" class="badge">Camera: disconnected</span>
+          </div>
+          <div class="preview"><img id="preview" src="/video_feed" alt="preview"></div>
+          <div class="row">
+            <button class="btn alt" onclick="scan()">🔍 Scan Cameras</button>
+            <select id="camSelect"></select>
+            <button class="btn ok" onclick="connectCam()">🔌 Connect</button>
+          </div>
+          <div style="margin-top:8px">Diagnostics: <span id="diagTxt">-</span></div>
+          <div id="camLog" class="small" style="margin-top:6px;white-space:pre-wrap;color:#93c5fd"></div>
+        </div>
+        <div class="card">
+          <div class="section-title">Storage</div>
+          <button class="btn alt" onclick="loadStorage()">🔄 Refresh Storage</button>
+          <select id="storageSelect"></select>
+          <button class="btn ok" onclick="selectStorage()">📁 Use Selected</button>
+          <div class="row"><input id="manualPath" placeholder="Or paste a path"><button class="btn" style="width:auto" onclick="useManual()">Set</button></div>
+          <div class="browser" id="browser"></div>
+          <div class="section-title" style="margin-top:12px">Capture</div>
+          <input id="productName" placeholder="Product name (optional)">
+          <button class="btn warn" onclick="capture()">📸 Capture Image</button>
+          <div class="section-title" style="margin-top:12px">Create Clip</div>
+          <div class="row"><input id="clipFps" placeholder="FPS" value="30"><input id="clipName" placeholder="Output name" value="clip.mp4"></div>
+          <button class="btn alt" onclick="createClip()">🎞️ Create 360° Clip</button>
+          <div class="section-title" style="margin-top:12px">Session</div>
+          <div class="row"><input id="rate" placeholder="Rate per min" value="6"><input id="dur" placeholder="Duration sec" value="60"></div>
+          <div class="row"><button class="btn" onclick="setRate(180)" style="width:auto">180 clicks/min</button><button class="btn" onclick="setRate(250)" style="width:auto">250 clicks/min</button></div>
+          <div class="row"><button id="startBtn" class="btn ok" onclick="start()">▶️ Start</button><button id="stopBtn" class="btn alt" onclick="stop()">⏹️ Stop</button></div>
+          <div id="status">Inactive</div>
+          <div class="section-title" style="margin-top:12px">Background Replace</div>
+          <div class="row wrap">
+            <div style="flex:1 1 120px">
+              <label class="small">Key color</label>
+              <input type="color" id="bgKeyColor" value="#00ff00">
+            </div>
+            <div style="flex:1 1 160px">
+              <label class="small">Tolerance (0-1)</label>
+              <input id="bgTolerance" value="0.20" />
+            </div>
+            <div style="flex:1 1 160px">
+              <label class="small">Softness (0-1)</label>
+              <input id="bgSoftness" value="0.10" />
+            </div>
+          </div>
+          <div class="row wrap">
+            <div style="flex:1 1 160px">
+              <label><input type="radio" name="bgFillMode" value="color" checked> Fill color</label>
+              <input type="color" id="bgFillColor" value="#ffffff">
+            </div>
+            <div style="flex:2 1 220px">
+              <label><input type="radio" name="bgFillMode" value="image"> Background image path</label>
+              <input id="bgFillImagePath" placeholder="/path/to/background.jpg" />
+            </div>
+          </div>
+          <div class="row wrap">
+            <div style="flex:1 1 100%">
+              <label class="small">Default backgrounds</label>
+              <select id="bgPreset">
+                <option value="">None</option>
+                <option value="color:#ffffff">Solid White</option>
+                <option value="color:#f3f4f6">Studio Light Gray</option>
+                <option value="color:#000000">Solid Black</option>
+                <option value="image:https://images.unsplash.com/photo-1519710164239-da123dc03ef4?w=1200">Marble Texture</option>
+                <option value="image:https://images.unsplash.com/photo-1493666438817-866a91353ca9?w=1200">Wood Texture</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn" onclick="applyBackgroundReplace()">🪄 Apply to folder</button>
+          <div class="section-title" style="margin-top:12px">Background Preview (single image)</div>
+          <div class="row wrap">
+            <div style="flex:1 1 100%">
+              <select id="previewSelect"></select>
+            </div>
+          </div>
+          <div class="preview" style="margin-top:8px">
+            <canvas id="previewCanvas" style="width:100%;height:100%"></canvas>
+          </div>
+          <div class="row"><button class="btn" onclick="drawPreview()" style="width:auto">Load selected</button><button class="btn alt" onclick="previewApply()" style="width:auto">Preview mask</button></div>
+          <div class="small">Tip: click on the canvas to sample the key color.</div>
+
+          <div class="section-title" style="margin-top:12px">🎯 YOLOv11 Training Dataset</div>
+          <div class="small" style="margin-bottom:8px">Prepare images for object detection training</div>
+          <div class="row wrap">
+            <div style="flex:1 1 160px">
+              <label class="small">Target size (px)</label>
+              <input id="yoloTargetSize" value="640" type="number" />
+            </div>
+            <div style="flex:1 1 160px">
+              <label class="small">Augment count</label>
+              <input id="yoloAugmentCount" value="3" type="number" />
+            </div>
+          </div>
+          <div>
+            <label class="small">Retail backgrounds (comma-separated paths or URLs)</label>
+            <input id="yoloRetailBgs" placeholder="/path/to/shelf1.jpg, /path/to/shelf2.jpg" />
+          </div>
+          <div class="row"><button class="btn ok" onclick="preprocessYOLO()">🚀 Generate YOLO Dataset</button></div>
+          <div class="row"><button class="btn alt" onclick="createAnnotations()">📝 Create Annotations</button></div>
+          <div class="small" style="margin-top:8px;color:#93c5fd">
+            This will:<br>
+            • Remove green background from images<br>
+            • Apply retail backgrounds if provided<br>
+            • Generate augmented variations (rotation, brightness, etc.)<br>
+            • Resize to YOLO format (640x640 with padding)<br>
+            • Create annotation templates
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+  </html>

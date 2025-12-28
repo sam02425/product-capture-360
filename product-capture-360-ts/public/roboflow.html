@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Collector - Powered by EyeAI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --bg-dark: #0f172a;
+      --bg-card: #1e293b;
+      --bg-hover: #334155;
+      --border: #334155;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+    .nav {
+      display: flex;
+      gap: 1rem;
+    }
+    .nav-btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-radius: 0.5rem;
+      transition: all 0.2s;
+    }
+    .nav-btn:hover, .nav-btn.active {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    /* Container */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      padding: 1rem 2rem;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active {
+      color: var(--primary);
+    }
+    .tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--primary);
+    }
+
+    /* Tab content */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .card-subtitle {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      margin-bottom: 1rem;
+    }
+
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+    }
+    .grid-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+    .grid-3 {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    /* Form elements */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.75rem;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      color: var(--text);
+      font-size: 1rem;
+      transition: all 0.2s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+    .btn-success {
+      background: #10b981;
+      color: white;
+    }
+    .btn-success:hover {
+      background: #059669;
+      transform: translateY(-1px);
+    }
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+    .btn-success:hover {
+      background: #059669;
+    }
+    .btn-secondary {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+    .btn-full {
+      width: 100%;
+      justify-content: center;
+    }
+
+    /* Toggle switch */
+    .toggle-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      cursor: pointer;
+      padding: 0.75rem 1rem;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      transition: all 0.2s;
+    }
+    .toggle:hover {
+      background: var(--bg-hover);
+    }
+    .toggle.active {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.1);
+    }
+    .toggle input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+
+    /* Preview grid */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .preview-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .preview-item:hover {
+      border-color: var(--primary);
+      transform: scale(1.05);
+    }
+    .preview-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .preview-label {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 0.5rem;
+      font-size: 0.75rem;
+      text-align: center;
+    }
+
+    /* Stats */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
+      background: var(--bg-dark);
+      padding: 1rem;
+      border-radius: 0.5rem;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    .stat-label {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      margin-top: 0.25rem;
+    }
+
+    /* Version list */
+    .version-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .version-item {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .version-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--primary);
+    }
+    .version-item.active {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.1);
+    }
+    .version-info {
+      flex: 1;
+    }
+    .version-name {
+      font-weight: 700;
+      font-size: 1.125rem;
+    }
+    .version-meta {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      margin-top: 0.25rem;
+    }
+    .version-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: var(--primary);
+      color: white;
+    }
+
+    /* Folder browser */
+    .folder-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+    .folder-item:hover {
+      background: var(--bg-hover);
+    }
+    .folder-item.selected {
+      background: rgba(99, 102, 241, 0.1);
+      border-left: 3px solid var(--primary);
+    }
+    .folder-icon {
+      font-size: 1.5rem;
+    }
+    .folder-name {
+      flex: 1;
+      font-weight: 500;
+    }
+    .folder-size {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* Progress bar */
+    .progress {
+      width: 100%;
+      height: 8px;
+      background: var(--bg-dark);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 1rem 0;
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--primary);
+      transition: width 0.3s;
+    }
+
+    /* Background manager */
+    .bg-upload-area {
+      border: 2px dashed var(--border);
+      border-radius: 0.5rem;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .bg-upload-area:hover {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.05);
+    }
+    .bg-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .bg-item {
+      position: relative;
+      aspect-ratio: 16/9;
+      border-radius: 0.5rem;
+      overflow: hidden;
+    }
+    .bg-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .bg-remove {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: var(--danger);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 2rem;
+      height: 2rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Camera preview */
+    .camera-preview {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #000;
+      border-radius: 0.5rem;
+      overflow: hidden;
+    }
+    .camera-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .container {
+        padding: 1rem;
+      }
+      .grid-2, .grid-3 {
+        grid-template-columns: 1fr;
+      }
+      .header {
+        flex-direction: column;
+        gap: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <div style="display: flex; align-items: center; gap: 1rem;">
+        <span style="font-size: 2rem;">👁️</span>
+        <div>
+          <div style="font-size: 1.5rem; font-weight: 700;">Image Collector</div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); font-weight: 400;">Powered by EyeAI</div>
+        </div>
+      </div>
+    </div>
+    <div class="nav">
+      <button class="nav-btn active" id="statusBadge">🟢 Connected</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('capture')">📸 Capture</button>
+      <button class="tab" onclick="switchTab('augment')">🎨 Augmentation</button>
+      <button class="tab" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
+      <button class="tab" onclick="switchTab('versions')">📦 Versions</button>
+      <button class="tab" onclick="switchTab('docs')">📚 Documentation</button>
+    </div>
+
+    <!-- Tab 1: Capture -->
+    <div class="tab-content active" id="capture-tab">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">📷 Camera Setup</div>
+          <div class="form-group">
+            <label>Select Camera</label>
+            <select id="cameraSelect"></select>
+          </div>
+          <button class="btn btn-primary btn-full" onclick="connectCamera()">Connect Camera</button>
+
+          <div class="camera-preview" style="margin-top: 1rem;">
+            <img id="cameraPreview" src="/video_feed" alt="Camera feed">
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>Product Name</label>
+            <input type="text" id="productName" placeholder="e.g., whiskey_bottle_001">
+          </div>
+
+          <div class="form-group">
+            <label>Capture Rate</label>
+            <select id="captureRate">
+              <option value="30">30 images/min</option>
+              <option value="60" selected>60 images/min</option>
+              <option value="120">120 images/min</option>
+              <option value="160">160 images/min</option>
+              <option value="180">180 images/min</option>
+            </select>
+          </div>
+
+          <div class="grid grid-2" style="margin-top: 1rem;">
+            <button class="btn btn-success btn-full" onclick="captureImage()">📸 Capture</button>
+            <button class="btn btn-secondary btn-full" onclick="startSession()">▶️ Auto Session</button>
+          </div>
+
+          <div id="sessionProgress" style="margin-top: 1rem; display: none;">
+            <div style="background: var(--bg-dark); border: 1px solid var(--success); border-radius: 0.5rem; padding: 1rem;">
+              <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--success);">📊 Session In Progress</div>
+              <div class="progress" style="margin: 0.5rem 0;">
+                <div class="progress-bar" id="sessionProgressBar" style="width: 0%; background: var(--success);"></div>
+              </div>
+              <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.875rem; margin-top: 0.5rem;">
+                <div style="color: var(--text-dim);">Images:</div>
+                <div id="sessionImages" style="font-weight: 500;">0 / 0</div>
+                <div style="color: var(--text-dim);">Rate:</div>
+                <div id="sessionRate">0/min</div>
+                <div style="color: var(--text-dim);">Elapsed:</div>
+                <div id="sessionElapsed">0s</div>
+                <div style="color: var(--text-dim);">Remaining:</div>
+                <div id="sessionRemaining">-</div>
+              </div>
+              <button class="btn btn-secondary btn-full" style="margin-top: 0.5rem;" onclick="stopSession()">⏹️ Stop Session</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">💾 Storage</div>
+          <div class="form-group">
+            <label>Storage Device</label>
+            <select id="storageSelect"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Current Storage Path</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="text" id="storagePath" readonly style="flex: 1;">
+              <button class="btn" onclick="goUpStorageFolder()" style="padding: 0.5rem 1rem;">⬆️ Up</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Browse Folders</label>
+            <div id="storageBrowser" style="border: 1px solid var(--border); border-radius: 0.5rem; max-height: 200px; overflow-y: auto; background: var(--bg-dark);"></div>
+          </div>
+
+          <div class="form-group">
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="newFolderName" placeholder="New folder name" style="flex: 1;">
+              <button class="btn btn-success" onclick="createStorageFolder()" style="padding: 0.5rem 1rem;">➕ Create</button>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-full" onclick="useCurrentStoragePath()">✓ Use This Location</button>
+
+          <div class="stats" style="margin-top: 1.5rem;">
+            <div class="stat-card">
+              <div class="stat-value" id="capturedCount">0</div>
+              <div class="stat-label">Images Captured</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="sessionStatus">Idle</div>
+              <div class="stat-label">Session Status</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: Augmentation -->
+    <div class="tab-content" id="augment-tab">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">🎨 Augmentation Settings</div>
+          <div class="card-subtitle">Select augmentations to apply to your dataset</div>
+
+          <div class="toggle-group">
+            <label class="toggle active" id="toggle-zoom">
+              <input type="checkbox" checked onchange="toggleAug('zoom')">
+              <span>🔍 Zoom Variations (0.5x - 1.5x)</span>
+            </label>
+            <label class="toggle active" id="toggle-lighting">
+              <input type="checkbox" checked onchange="toggleAug('lighting')">
+              <span>💡 Lighting Adjustments</span>
+            </label>
+            <label class="toggle active" id="toggle-color">
+              <input type="checkbox" checked onchange="toggleAug('color')">
+              <span>🎨 Color Jitter</span>
+            </label>
+            <label class="toggle active" id="toggle-shadows">
+              <input type="checkbox" checked onchange="toggleAug('shadows')">
+              <span>🌑 Realistic Shadows</span>
+            </label>
+            <label class="toggle active" id="toggle-rotation">
+              <input type="checkbox" checked onchange="toggleAug('rotation')">
+              <span>🔄 Rotation (±8°)</span>
+            </label>
+            <label class="toggle" id="toggle-flip">
+              <input type="checkbox" onchange="toggleAug('flip')">
+              <span>↔️ Horizontal Flip</span>
+            </label>
+            <label class="toggle" id="toggle-blur">
+              <input type="checkbox" onchange="toggleAug('blur')">
+              <span>🌫️ Slight Blur</span>
+            </label>
+            <label class="toggle" id="toggle-noise">
+              <input type="checkbox" onchange="toggleAug('noise')">
+              <span>📡 Noise</span>
+            </label>
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <label>Augmentations Per Background</label>
+            <input type="number" id="augPerBg" value="5" min="1" max="20">
+          </div>
+
+          <div class="form-group">
+            <label>Segmentation Model</label>
+            <select id="segmentationModel">
+              <option value="rembg" selected>rembg (Fast, recommended for bottles)</option>
+              <option value="sam">SAM (Slow, works on anything)</option>
+              <option value="u2net">U2-Net (Balanced)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">🖼️ Background Management</div>
+          <div class="card-subtitle">Upload retail shelf/store backgrounds</div>
+
+          <div class="bg-upload-area" onclick="document.getElementById('bgUpload').click()">
+            <div style="font-size: 3rem;">📤</div>
+            <div style="margin-top: 0.5rem; font-weight: 600;">Click to upload backgrounds</div>
+            <div style="margin-top: 0.25rem; font-size: 0.875rem; color: var(--text-dim);">JPEG, PNG up to 10MB</div>
+            <input type="file" id="bgUpload" multiple accept="image/*" style="display:none" onchange="uploadBackgrounds(event)">
+          </div>
+
+          <div class="bg-list" id="backgroundList"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📂 Source Folder Browser</div>
+        <div class="card-subtitle">Browse and select product image folders</div>
+
+        <div class="form-group">
+          <label>Select Drive</label>
+          <select id="driveSelect" onchange="loadDriveFolders()">
+            <option value="">Loading drives...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Current Path</label>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" id="currentPath" readonly style="flex: 1;">
+            <button class="btn" onclick="goUpFolder()" style="padding: 0.5rem 1rem;">⬆️ Up</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Folders & Files</label>
+          <div id="folderBrowser" style="border: 1px solid var(--border); border-radius: 0.5rem; max-height: 300px; overflow-y: auto; background: var(--bg-dark);"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Selected Product Folder</label>
+          <input type="text" id="selectedProductFolder" readonly>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">👁️ Augmentation Preview</div>
+        <div class="card-subtitle">Select an image to preview augmentations</div>
+
+        <div class="form-group">
+          <label>Select Source Image</label>
+          <select id="previewImageSelect"></select>
+        </div>
+
+        <div class="grid grid-2" style="margin-top: 1rem;">
+          <div class="form-group">
+            <label>Zoom: <span id="zoomValue">1.0</span>x</label>
+            <input type="range" id="zoomSlider" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateSliderValue('zoom', this.value)">
+          </div>
+          <div class="form-group">
+            <label>Brightness: <span id="brightnessValue">1.0</span></label>
+            <input type="range" id="brightnessSlider" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateSliderValue('brightness', this.value)">
+          </div>
+          <div class="form-group">
+            <label>Contrast: <span id="contrastValue">1.0</span></label>
+            <input type="range" id="contrastSlider" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateSliderValue('contrast', this.value)">
+          </div>
+          <div class="form-group">
+            <label>Saturation: <span id="saturationValue">1.0</span></label>
+            <input type="range" id="saturationSlider" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateSliderValue('saturation', this.value)">
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top: 1rem;">
+          <button class="btn btn-primary" onclick="generatePreview()">🔄 Preview Single Image</button>
+          <button class="btn btn-success" onclick="batchGeneratePreview()">⚡ Batch Preview All Images</button>
+        </div>
+
+        <div style="margin-top: 1rem;">
+          <button class="btn btn-primary btn-full" onclick="autoDetectProduct()">🎯 Auto-Detect Product & Show BBox</button>
+        </div>
+
+        <div id="detectionResult" style="margin-top: 1rem; display: none;">
+          <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem;">
+            <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--primary);">✓ Detection Result</div>
+            <div style="position: relative; margin: 1rem 0;">
+              <canvas id="detectionCanvas" style="width: 100%; border-radius: 0.5rem; border: 1px solid var(--border);"></canvas>
+            </div>
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.875rem;">
+              <div style="color: var(--text-dim);">Class:</div>
+              <div id="detectionClass" style="font-weight: 500;">-</div>
+              <div style="color: var(--text-dim);">BBox:</div>
+              <div id="detectionBBox" style="font-family: monospace; font-size: 0.75rem;">-</div>
+              <div style="color: var(--text-dim);">Confidence:</div>
+              <div id="detectionConfidence">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="batchProgress" style="margin-top: 1rem; display: none;">
+          <div class="progress">
+            <div class="progress-bar" id="batchProgressBar" style="width: 0%;"></div>
+          </div>
+          <div style="text-align: center; margin-top: 0.5rem; color: var(--text-dim);">
+            <span id="batchProgressText">Processing...</span>
+          </div>
+        </div>
+
+        <div class="preview-grid" id="previewGrid" style="margin-top: 1rem;"></div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Generate Dataset -->
+    <div class="tab-content" id="generate-tab">
+      <div class="card">
+        <div class="card-title">🚀 Generate Training Dataset</div>
+
+        <div class="stats">
+          <div class="stat-card">
+            <div class="stat-value" id="sourceImagesCount">0</div>
+            <div class="stat-label">Source Images</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="backgroundsCount">0</div>
+            <div class="stat-label">Backgrounds</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="estimatedCount">0</div>
+            <div class="stat-label">Estimated Output</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Export Formats</label>
+          <div class="toggle-group">
+            <label class="toggle active">
+              <input type="checkbox" checked id="export-yolov5">
+              <span>YOLOv5</span>
+            </label>
+            <label class="toggle active">
+              <input type="checkbox" checked id="export-yolov8">
+              <span>YOLOv8</span>
+            </label>
+            <label class="toggle active">
+              <input type="checkbox" checked id="export-yolov11">
+              <span>YOLOv11</span>
+            </label>
+            <label class="toggle active">
+              <input type="checkbox" checked id="export-coco">
+              <span>COCO</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Train/Val Split (%)</label>
+          <input type="number" id="trainSplit" value="80" min="50" max="95">
+        </div>
+
+        <div class="form-group">
+          <label>Version Description (Optional)</label>
+          <textarea id="versionDesc" rows="3" placeholder="Describe changes in this version..."></textarea>
+        </div>
+
+        <button class="btn btn-success btn-full" onclick="generateDataset()" style="font-size: 1.125rem; padding: 1rem;">
+          🚀 Generate Dataset
+        </button>
+
+        <div id="progressSection" style="display: none; margin-top: 1.5rem;">
+          <div class="progress">
+            <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+          </div>
+          <div id="progressText" style="text-align: center; margin-top: 0.5rem; color: var(--text-dim);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 4: Versions -->
+    <div class="tab-content" id="versions-tab">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">📦 Dataset Versions</div>
+          <div class="version-list" id="versionList"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">📊 Version Details</div>
+          <div id="versionDetails">
+            <div style="text-align: center; padding: 2rem; color: var(--text-dim);">
+              Select a version to view details
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 5: Documentation -->
+    <div class="tab-content" id="docs-tab">
+      <div class="card">
+        <div class="card-title">📚 Image Collector - Complete Workflow Documentation</div>
+        <div class="card-subtitle">Powered by EyeAI - Professional Data Collection & Augmentation Platform</div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">🎯 Workflow Overview</h3>
+          <p style="color: var(--text); line-height: 1.8;">
+            Image Collector is a complete solution for collecting, augmenting, and preparing image datasets for computer vision models.
+            The workflow consists of 4 main stages, each utilizing industry-standard techniques and models.
+          </p>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">📸 Stage 1: Image Capture</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--primary);">
+            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Technology Stack:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li><strong>Camera Interface:</strong> FFmpeg with AVFoundation (macOS) / V4L2 (Linux)</li>
+              <li><strong>Streaming Protocol:</strong> MJPEG over HTTP</li>
+              <li><strong>Frame Rate Control:</strong> Precision interval-based capture (30-180 frames/min)</li>
+              <li><strong>Storage:</strong> Async parallel file I/O (50 concurrent saves)</li>
+            </ul>
+            <h4 style="color: var(--success); margin-top: 1rem; margin-bottom: 0.5rem;">Features:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li>Real-time preview with adjustable resolution (720p, 1080p)</li>
+              <li>Automated session capture with configurable rates</li>
+              <li>Live progress tracking and queue monitoring</li>
+              <li>USB/Network camera support</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">🎨 Stage 2: Data Augmentation</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--warning);">
+            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Augmentation Techniques:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li><strong>Geometric Transformations:</strong>
+                <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>Rotation: -15° to +15° (simulate camera angle variations)</li>
+                  <li>Zoom: 0.5x to 1.5x (object scale variation)</li>
+                  <li>Horizontal Flip: Mirror augmentation</li>
+                </ul>
+              </li>
+              <li><strong>Color Augmentation:</strong>
+                <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>Brightness adjustment (±30%)</li>
+                  <li>Grayscale conversion</li>
+                </ul>
+              </li>
+              <li><strong>Background Replacement:</strong>
+                <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>Automatic segmentation using <strong>rembg</strong> (U-2-Net model)</li>
+                  <li>Polygon mask extraction via OpenCV contours</li>
+                  <li>Multi-background composition</li>
+                </ul>
+              </li>
+            </ul>
+            <h4 style="color: var(--success); margin-top: 1rem; margin-bottom: 0.5rem;">Models Used:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li><strong>rembg:</strong> Background removal using U-2-Net architecture</li>
+              <li><strong>OpenCV:</strong> Image processing and polygon simplification (Douglas-Peucker algorithm)</li>
+              <li><strong>PIL/Pillow:</strong> Image manipulation and composition</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">⚙️ Stage 3: Dataset Generation</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--success);">
+            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Generation Pipeline:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li><strong>Batch Processing:</strong> FFmpeg-based parallel image generation</li>
+              <li><strong>Format Support:</strong> JPEG output with configurable quality</li>
+              <li><strong>Annotation:</strong> JSON metadata with bounding box coordinates</li>
+              <li><strong>Dataset Structure:</strong> YOLO-compatible folder organization</li>
+            </ul>
+            <h4 style="color: var(--success); margin-top: 1rem; margin-bottom: 0.5rem;">Output Formats:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li>Training images with augmentations</li>
+              <li>Segmentation masks (PNG format)</li>
+              <li>Polygon annotations (JSON format)</li>
+              <li>Dataset manifest and statistics</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">📦 Stage 4: Version Management</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--danger);">
+            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Version Control Features:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li>Automatic versioning with timestamps</li>
+              <li>Dataset statistics tracking</li>
+              <li>Export formats: ZIP, TAR, direct download</li>
+              <li>Version comparison and rollback capability</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">🔧 Technical Specifications</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+              <div>
+                <h4 style="color: var(--warning);">Backend</h4>
+                <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>Node.js + TypeScript</li>
+                  <li>Fastify web framework</li>
+                  <li>Async I/O with 50 parallel workers</li>
+                </ul>
+              </div>
+              <div>
+                <h4 style="color: var(--warning);">Image Processing</h4>
+                <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>FFmpeg for video capture</li>
+                  <li>Python (rembg, OpenCV, PIL)</li>
+                  <li>U-2-Net for segmentation</li>
+                </ul>
+              </div>
+              <div>
+                <h4 style="color: var(--warning);">Performance</h4>
+                <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>160 frames/min capture rate</li>
+                  <li>20-30 images/sec save throughput</li>
+                  <li>Real-time progress monitoring</li>
+                </ul>
+              </div>
+              <div>
+                <h4 style="color: var(--warning);">Supported Models</h4>
+                <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem; margin-top: 0.5rem;">
+                  <li>YOLOv11 (detection)</li>
+                  <li>U-2-Net (segmentation)</li>
+                  <li>SAM (optional, advanced segmentation)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 2rem; padding: 1.5rem; background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%); border-radius: 0.5rem;">
+          <h3 style="color: white; margin-bottom: 0.5rem;">💡 Best Practices</h3>
+          <ul style="color: white; line-height: 1.8; margin-left: 1.5rem;">
+            <li>Capture images at consistent intervals for uniform dataset</li>
+            <li>Use multiple backgrounds to improve model generalization</li>
+            <li>Apply varied augmentations to increase dataset diversity</li>
+            <li>Monitor queue status during high-speed capture sessions</li>
+            <li>Version your datasets before major changes</li>
+          </ul>
+        </div>
+
+        <div style="margin-top: 2rem; padding: 1rem; background: var(--bg-dark); border-radius: 0.5rem; text-align: center;">
+          <p style="color: var(--text-dim); font-size: 0.875rem;">
+            Powered by <strong style="color: var(--primary);">EyeAI</strong> |
+            Built with ❤️ for Computer Vision Practitioners |
+            Version 1.0.0
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/roboflow.js"></script>
+</body>
+</html>
