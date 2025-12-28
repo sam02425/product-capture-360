@@ -1259,6 +1259,1063 @@ function exportVersionMetadata() {
   alert(`Exported metadata for ${state.versions.length} versions`);
 }
 
+// ==================== ANNOTATION SYSTEM ====================
+
+// Annotation State
+const annotationState = {
+  files: [],
+  currentFileIndex: -1,
+  currentImage: null,
+  labels: [],
+  selectedLabel: null,
+  annotations: [],
+  selectedAnnotation: null,
+  tool: 'bbox', // bbox, obb, polygon, segmentation, select, pan
+  zoom: 1.0,
+  pan: { x: 0, y: 0 },
+  drawing: false,
+  currentShape: null,
+  history: [],
+  historyIndex: -1,
+  showAnnotations: true,
+  canvas: null,
+  ctx: null,
+};
+
+// Color palette for labels
+const LABEL_COLORS = [
+  '#ef4444', '#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#8b5cf6',
+  '#ec4899', '#f97316', '#84cc16', '#14b8a6', '#3b82f6', '#a855f7'
+];
+
+// Initialize annotation canvas
+function initAnnotationCanvas() {
+  const canvas = document.getElementById('annotationCanvas');
+  if (!canvas) return;
+
+  annotationState.canvas = canvas;
+  annotationState.ctx = canvas.getContext('2d');
+
+  // Add event listeners
+  canvas.addEventListener('mousedown', handleCanvasMouseDown);
+  canvas.addEventListener('mousemove', handleCanvasMouseMove);
+  canvas.addEventListener('mouseup', handleCanvasMouseUp);
+  canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
+
+  // File input listener
+  document.getElementById('annotationFileInput')?.addEventListener('change', handleFileUpload);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', handleAnnotationKeyboard);
+}
+
+// File Upload Handler
+function handleFileUpload(event) {
+  const files = Array.from(event.target.files);
+
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      annotationState.files.push({
+        name: file.name,
+        type: file.type,
+        data: e.target.result,
+        annotations: [],
+      });
+      renderFileList();
+
+      // Load first file automatically
+      if (annotationState.currentFileIndex === -1) {
+        loadAnnotationFile(0);
+      }
+    };
+
+    if (file.type.startsWith('image/')) {
+      reader.readAsDataURL(file);
+    } else if (file.type.startsWith('video/')) {
+      // Video support - will be implemented in Phase 2
+      console.log('Video support coming soon');
+    }
+  });
+}
+
+// Render File List
+function renderFileList() {
+  const fileList = document.getElementById('annotationFileList');
+  if (!fileList) return;
+
+  fileList.innerHTML = annotationState.files.map((file, idx) => `
+    <div class="file-item ${idx === annotationState.currentFileIndex ? 'active' : ''}" onclick="loadAnnotationFile(${idx})">
+      <img src="${file.data}" class="file-thumbnail" alt="${file.name}">
+      <div class="file-info">
+        <div class="file-name">${file.name}</div>
+        <div class="file-meta">${file.annotations?.length || 0} annotations</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Load Annotation File
+window.loadAnnotationFile = function(index) {
+  const file = annotationState.files[index];
+  if (!file) return;
+
+  annotationState.currentFileIndex = index;
+  annotationState.annotations = file.annotations || [];
+
+  const img = new Image();
+  img.onload = () => {
+    annotationState.currentImage = img;
+
+    // Resize canvas to fit image
+    const canvas = annotationState.canvas;
+    const container = canvas.parentElement;
+    const maxWidth = container.clientWidth - 40;
+    const maxHeight = container.clientHeight - 40;
+
+    let scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+
+    annotationState.zoom = scale;
+    annotationState.pan = { x: 0, y: 0 };
+
+    renderCanvas();
+    renderFileList();
+    renderAnnotationsList();
+    updateAnnotationStatus();
+  };
+  img.src = file.data;
+};
+
+// Render Canvas
+function renderCanvas() {
+  const { canvas, ctx, currentImage, zoom, pan, annotations, showAnnotations } = annotationState;
+  if (!ctx || !currentImage) return;
+
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw image
+  ctx.save();
+  ctx.translate(pan.x, pan.y);
+  ctx.scale(zoom, zoom);
+  ctx.drawImage(currentImage, 0, 0);
+  ctx.restore();
+
+  // Draw annotations
+  if (showAnnotations) {
+    annotations.forEach((ann, idx) => {
+      const isSelected = idx === annotationState.selectedAnnotation;
+      drawAnnotation(ann, isSelected);
+    });
+  }
+
+  // Draw current shape being drawn
+  if (annotationState.currentShape) {
+    drawAnnotation(annotationState.currentShape, true, true);
+  }
+}
+
+// Draw Annotation
+function drawAnnotation(ann, isSelected = false, isDrawing = false) {
+  const { ctx, zoom, pan } = annotationState;
+  const label = annotationState.labels.find(l => l.name === ann.label);
+  const color = label?.color || '#6366f1';
+
+  ctx.save();
+  ctx.translate(pan.x, pan.y);
+  ctx.scale(zoom, zoom);
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = isSelected ? 3 / zoom : 2 / zoom;
+  ctx.fillStyle = color + '20'; // 20% opacity
+
+  switch (ann.type) {
+    case 'bbox':
+      const [x, y, w, h] = ann.bbox;
+      ctx.strokeRect(x, y, w, h);
+      if (isDrawing || isSelected) {
+        ctx.fillRect(x, y, w, h);
+      }
+      break;
+
+    case 'obb':
+      // Oriented Bounding Box: [cx, cy, width, height, angle]
+      if (ann.obb) {
+        const [cx, cy, width, height, angle] = ann.obb;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+        ctx.strokeRect(-width/2, -height/2, width, height);
+        if (isDrawing || isSelected) {
+          ctx.fillRect(-width/2, -height/2, width, height);
+        }
+        // Draw rotation handle
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(0, -height/2 - 10, 5 / zoom, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      break;
+
+    case 'polygon':
+      if (ann.points && ann.points.length > 0) {
+        ctx.beginPath();
+        ctx.moveTo(ann.points[0][0], ann.points[0][1]);
+        ann.points.forEach(([px, py]) => ctx.lineTo(px, py));
+        ctx.closePath();
+        ctx.stroke();
+        if (isDrawing || isSelected) {
+          ctx.fill();
+        }
+        // Draw points
+        if (isSelected || isDrawing) {
+          ann.points.forEach(([px, py]) => {
+            ctx.beginPath();
+            ctx.arc(px, py, 4 / zoom, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+          });
+        }
+      }
+      break;
+
+    case 'segmentation':
+      // Draw segmentation mask
+      if (ann.maskCanvas) {
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(ann.maskCanvas, 0, 0);
+        ctx.globalAlpha = 1.0;
+      }
+      break;
+  }
+
+  ctx.restore();
+}
+
+// Canvas Event Handlers
+function handleCanvasMouseDown(e) {
+  const rect = annotationState.canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left - annotationState.pan.x) / annotationState.zoom;
+  const y = (e.clientY - rect.top - annotationState.pan.y) / annotationState.zoom;
+
+  if (annotationState.tool === 'bbox') {
+    annotationState.drawing = true;
+    annotationState.currentShape = {
+      type: 'bbox',
+      bbox: [x, y, 0, 0],
+      label: annotationState.selectedLabel?.name || 'unlabeled',
+    };
+  } else if (annotationState.tool === 'obb') {
+    annotationState.drawing = true;
+    annotationState.currentShape = {
+      type: 'obb',
+      obb: [x, y, 0, 0, 0], // cx, cy, w, h, angle
+      label: annotationState.selectedLabel?.name || 'unlabeled',
+      startPoint: { x, y },
+    };
+  } else if (annotationState.tool === 'polygon') {
+    if (!annotationState.currentShape) {
+      // Start new polygon
+      annotationState.drawing = true;
+      annotationState.currentShape = {
+        type: 'polygon',
+        points: [[x, y]],
+        label: annotationState.selectedLabel?.name || 'unlabeled',
+      };
+    } else if (annotationState.currentShape.type === 'polygon') {
+      // Add point to existing polygon
+      const firstPoint = annotationState.currentShape.points[0];
+      const distToFirst = Math.sqrt(Math.pow(x - firstPoint[0], 2) + Math.pow(y - firstPoint[1], 2));
+
+      if (distToFirst < 10 / annotationState.zoom && annotationState.currentShape.points.length >= 3) {
+        // Close polygon
+        annotationState.annotations.push(annotationState.currentShape);
+        if (annotationState.currentFileIndex >= 0) {
+          annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+        }
+        addToHistory();
+        annotationState.currentShape = null;
+        annotationState.drawing = false;
+        renderAnnotationsList();
+        updateAnnotationStatus();
+      } else {
+        // Add new point
+        annotationState.currentShape.points.push([x, y]);
+      }
+      renderCanvas();
+    }
+  } else if (annotationState.tool === 'segmentation') {
+    annotationState.drawing = true;
+    if (!annotationState.currentShape) {
+      // Create new segmentation mask
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = annotationState.currentImage.width;
+      maskCanvas.height = annotationState.currentImage.height;
+      const maskCtx = maskCanvas.getContext('2d');
+
+      annotationState.currentShape = {
+        type: 'segmentation',
+        maskCanvas: maskCanvas,
+        maskCtx: maskCtx,
+        label: annotationState.selectedLabel?.name || 'unlabeled',
+      };
+    }
+    // Start drawing on mask
+    const maskCtx = annotationState.currentShape.maskCtx;
+    const label = annotationState.labels.find(l => l.name === annotationState.currentShape.label);
+    maskCtx.strokeStyle = label?.color || '#6366f1';
+    maskCtx.lineWidth = 20; // Brush size
+    maskCtx.lineCap = 'round';
+    maskCtx.lineJoin = 'round';
+    maskCtx.beginPath();
+    maskCtx.moveTo(x, y);
+  } else if (annotationState.tool === 'select') {
+    // Select annotation
+    const selectedIdx = findAnnotationAtPoint(x, y);
+    annotationState.selectedAnnotation = selectedIdx;
+    renderCanvas();
+    renderAnnotationsList();
+    updatePropertiesPanel();
+  } else if (annotationState.tool === 'pan') {
+    annotationState.drawing = true;
+    annotationState.panStart = { x: e.clientX - annotationState.pan.x, y: e.clientY - annotationState.pan.y };
+  }
+}
+
+function handleCanvasMouseMove(e) {
+  const rect = annotationState.canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left - annotationState.pan.x) / annotationState.zoom;
+  const y = (e.clientY - rect.top - annotationState.pan.y) / annotationState.zoom;
+
+  // Show preview for polygon tool
+  if (annotationState.tool === 'polygon' && annotationState.currentShape && annotationState.currentShape.type === 'polygon') {
+    renderCanvas();
+    // Draw line to cursor
+    const { ctx, zoom, pan } = annotationState;
+    const lastPoint = annotationState.currentShape.points[annotationState.currentShape.points.length - 1];
+    const label = annotationState.labels.find(l => l.name === annotationState.currentShape.label);
+    const color = label?.color || '#6366f1';
+
+    ctx.save();
+    ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([5 / zoom, 5 / zoom]);
+    ctx.beginPath();
+    ctx.moveTo(lastPoint[0], lastPoint[1]);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (!annotationState.drawing) return;
+
+  if (annotationState.tool === 'bbox' && annotationState.currentShape) {
+    const [startX, startY] = annotationState.currentShape.bbox;
+    annotationState.currentShape.bbox = [startX, startY, x - startX, y - startY];
+    renderCanvas();
+  } else if (annotationState.tool === 'obb' && annotationState.currentShape) {
+    const startPoint = annotationState.currentShape.startPoint;
+    const cx = (startPoint.x + x) / 2;
+    const cy = (startPoint.y + y) / 2;
+    const width = Math.abs(x - startPoint.x);
+    const height = Math.abs(y - startPoint.y);
+
+    // Calculate angle if shift key is pressed
+    let angle = 0;
+    if (e.shiftKey) {
+      angle = Math.atan2(y - startPoint.y, x - startPoint.x);
+    }
+
+    annotationState.currentShape.obb = [cx, cy, width, height, angle];
+    renderCanvas();
+  } else if (annotationState.tool === 'segmentation' && annotationState.currentShape) {
+    const maskCtx = annotationState.currentShape.maskCtx;
+    maskCtx.lineTo(x, y);
+    maskCtx.stroke();
+    renderCanvas();
+  } else if (annotationState.tool === 'pan') {
+    annotationState.pan.x = e.clientX - annotationState.panStart.x;
+    annotationState.pan.y = e.clientY - annotationState.panStart.y;
+    renderCanvas();
+  }
+}
+
+function handleCanvasMouseUp(e) {
+  if (annotationState.tool === 'bbox' && annotationState.currentShape) {
+    const [x, y, w, h] = annotationState.currentShape.bbox;
+
+    // Only add if bbox has meaningful size
+    if (Math.abs(w) > 5 && Math.abs(h) > 5) {
+      // Normalize negative dimensions
+      const normalizedBbox = [
+        w < 0 ? x + w : x,
+        h < 0 ? y + h : y,
+        Math.abs(w),
+        Math.abs(h)
+      ];
+
+      annotationState.currentShape.bbox = normalizedBbox;
+      delete annotationState.currentShape.startPoint;
+      annotationState.annotations.push(annotationState.currentShape);
+
+      // Save to file
+      if (annotationState.currentFileIndex >= 0) {
+        annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+      }
+
+      addToHistory();
+      renderAnnotationsList();
+      updateAnnotationStatus();
+    }
+
+    annotationState.currentShape = null;
+  } else if (annotationState.tool === 'obb' && annotationState.currentShape) {
+    const [cx, cy, w, h, angle] = annotationState.currentShape.obb;
+
+    // Only add if OBB has meaningful size
+    if (w > 5 && h > 5) {
+      delete annotationState.currentShape.startPoint;
+      annotationState.annotations.push(annotationState.currentShape);
+
+      // Save to file
+      if (annotationState.currentFileIndex >= 0) {
+        annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+      }
+
+      addToHistory();
+      renderAnnotationsList();
+      updateAnnotationStatus();
+    }
+
+    annotationState.currentShape = null;
+  } else if (annotationState.tool === 'segmentation' && annotationState.currentShape) {
+    // Finalize segmentation stroke (don't close the shape yet, allow multiple strokes)
+    // User can press Enter or Escape to finish
+  }
+
+  if (annotationState.tool !== 'polygon' && annotationState.tool !== 'segmentation') {
+    annotationState.drawing = false;
+  }
+
+  renderCanvas();
+}
+
+function handleCanvasWheel(e) {
+  e.preventDefault();
+
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const newZoom = Math.max(0.1, Math.min(5, annotationState.zoom * delta));
+
+  // Zoom towards mouse position
+  const rect = annotationState.canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  annotationState.pan.x = mouseX - (mouseX - annotationState.pan.x) * (newZoom / annotationState.zoom);
+  annotationState.pan.y = mouseY - (mouseY - annotationState.pan.y) * (newZoom / annotationState.zoom);
+  annotationState.zoom = newZoom;
+
+  updateZoomLevel();
+  renderCanvas();
+}
+
+// Find annotation at point
+function findAnnotationAtPoint(x, y) {
+  for (let i = annotationState.annotations.length - 1; i >= 0; i--) {
+    const ann = annotationState.annotations[i];
+    if (ann.type === 'bbox') {
+      const [bx, by, bw, bh] = ann.bbox;
+      if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+// Tool Selection
+window.selectTool = function(tool) {
+  annotationState.tool = tool;
+  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+  document.getElementById(`tool-${tool}`)?.classList.add('active');
+
+  // Update cursor
+  const canvas = annotationState.canvas;
+  if (tool === 'pan') {
+    canvas.style.cursor = 'grab';
+  } else if (tool === 'select') {
+    canvas.style.cursor = 'pointer';
+  } else {
+    canvas.style.cursor = 'crosshair';
+  }
+};
+
+// Label Management
+window.addLabel = function() {
+  const input = document.getElementById('newLabelInput');
+  const labelName = input.value.trim();
+
+  if (!labelName) {
+    alert('Please enter a label name');
+    return;
+  }
+
+  if (annotationState.labels.find(l => l.name === labelName)) {
+    alert('Label already exists');
+    return;
+  }
+
+  const color = LABEL_COLORS[annotationState.labels.length % LABEL_COLORS.length];
+  annotationState.labels.push({
+    name: labelName,
+    color: color,
+    count: 0,
+  });
+
+  input.value = '';
+  renderLabelList();
+};
+
+window.selectLabel = function(index) {
+  annotationState.selectedLabel = annotationState.labels[index];
+  renderLabelList();
+};
+
+window.deleteLabel = function(index) {
+  if (confirm(`Delete label "${annotationState.labels[index].name}"?`)) {
+    annotationState.labels.splice(index, 1);
+    renderLabelList();
+  }
+};
+
+function renderLabelList() {
+  const labelList = document.getElementById('labelList');
+  if (!labelList) return;
+
+  // Count annotations per label
+  const labelCounts = {};
+  annotationState.files.forEach(file => {
+    file.annotations?.forEach(ann => {
+      labelCounts[ann.label] = (labelCounts[ann.label] || 0) + 1;
+    });
+  });
+
+  labelList.innerHTML = annotationState.labels.map((label, idx) => `
+    <div class="label-item ${annotationState.selectedLabel?.name === label.name ? 'active' : ''}" onclick="selectLabel(${idx})">
+      <div class="label-color" style="background: ${label.color};"></div>
+      <div class="label-name">${label.name}</div>
+      <div class="label-count">${labelCounts[label.name] || 0}</div>
+      <button class="label-delete" onclick="event.stopPropagation(); deleteLabel(${idx})">×</button>
+    </div>
+  `).join('');
+}
+
+// Annotations List
+function renderAnnotationsList() {
+  const list = document.getElementById('annotationsList');
+  if (!list) return;
+
+  list.innerHTML = annotationState.annotations.map((ann, idx) => {
+    const icon = ann.type === 'bbox' ? '⬜' : ann.type === 'obb' ? '📐' : ann.type === 'polygon' ? '⬡' : '🎨';
+    const coords = ann.type === 'bbox' ?
+      `[${ann.bbox.map(v => Math.round(v)).join(', ')}]` :
+      ann.type === 'polygon' ? `${ann.points.length} points` : '';
+
+    return `
+      <div class="annotation-item ${idx === annotationState.selectedAnnotation ? 'active' : ''}" onclick="selectAnnotationFromList(${idx})">
+        <div class="annotation-icon">${icon}</div>
+        <div class="annotation-details">
+          <div class="annotation-label">${ann.label}</div>
+          <div class="annotation-coords">${coords}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.selectAnnotationFromList = function(index) {
+  annotationState.selectedAnnotation = index;
+  renderCanvas();
+  renderAnnotationsList();
+  updatePropertiesPanel();
+};
+
+// Properties Panel
+function updatePropertiesPanel() {
+  const panel = document.getElementById('annotationProperties');
+  if (!panel) return;
+
+  if (annotationState.selectedAnnotation === null || annotationState.selectedAnnotation === -1) {
+    panel.innerHTML = '<p style="color: var(--text-dim); font-size: 0.875rem; text-align: center; padding: 2rem 1rem;">Select an annotation to view properties</p>';
+    return;
+  }
+
+  const ann = annotationState.annotations[annotationState.selectedAnnotation];
+  const label = annotationState.labels.find(l => l.name === ann.label);
+
+  panel.innerHTML = `
+    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Type</label>
+        <div style="font-size: 0.875rem; color: var(--text);">${ann.type.toUpperCase()}</div>
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Label</label>
+        <div style="font-size: 0.875rem; color: var(--text); display: flex; align-items: center; gap: 0.5rem;">
+          <div style="width: 12px; height: 12px; border-radius: 50%; background: ${label?.color || '#6366f1'};"></div>
+          ${ann.label}
+        </div>
+      </div>
+      ${ann.type === 'bbox' ? `
+        <div>
+          <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Bounding Box</label>
+          <div style="font-size: 0.875rem; color: var(--text); font-family: monospace;">
+            x: ${Math.round(ann.bbox[0])}<br>
+            y: ${Math.round(ann.bbox[1])}<br>
+            w: ${Math.round(ann.bbox[2])}<br>
+            h: ${Math.round(ann.bbox[3])}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Zoom Controls
+window.zoomIn = function() {
+  annotationState.zoom = Math.min(5, annotationState.zoom * 1.2);
+  updateZoomLevel();
+  renderCanvas();
+};
+
+window.zoomOut = function() {
+  annotationState.zoom = Math.max(0.1, annotationState.zoom / 1.2);
+  updateZoomLevel();
+  renderCanvas();
+};
+
+window.resetZoom = function() {
+  annotationState.zoom = 1.0;
+  annotationState.pan = { x: 0, y: 0 };
+  updateZoomLevel();
+  renderCanvas();
+};
+
+function updateZoomLevel() {
+  const zoomEl = document.getElementById('zoomLevel');
+  if (zoomEl) {
+    zoomEl.textContent = Math.round(annotationState.zoom * 100) + '%';
+  }
+}
+
+// Undo/Redo
+function addToHistory() {
+  annotationState.history = annotationState.history.slice(0, annotationState.historyIndex + 1);
+  annotationState.history.push(JSON.stringify(annotationState.annotations));
+  annotationState.historyIndex++;
+}
+
+window.undoAnnotation = function() {
+  if (annotationState.historyIndex > 0) {
+    annotationState.historyIndex--;
+    annotationState.annotations = JSON.parse(annotationState.history[annotationState.historyIndex]);
+    renderCanvas();
+    renderAnnotationsList();
+  }
+};
+
+window.redoAnnotation = function() {
+  if (annotationState.historyIndex < annotationState.history.length - 1) {
+    annotationState.historyIndex++;
+    annotationState.annotations = JSON.parse(annotationState.history[annotationState.historyIndex]);
+    renderCanvas();
+    renderAnnotationsList();
+  }
+};
+
+window.deleteSelected = function() {
+  if (annotationState.selectedAnnotation !== null && annotationState.selectedAnnotation !== -1) {
+    annotationState.annotations.splice(annotationState.selectedAnnotation, 1);
+    annotationState.selectedAnnotation = null;
+
+    if (annotationState.currentFileIndex >= 0) {
+      annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+    }
+
+    addToHistory();
+    renderCanvas();
+    renderAnnotationsList();
+    updatePropertiesPanel();
+    updateAnnotationStatus();
+  }
+};
+
+window.toggleAnnotationVisibility = function() {
+  annotationState.showAnnotations = !annotationState.showAnnotations;
+  renderCanvas();
+};
+
+// Status Update
+function updateAnnotationStatus() {
+  const statusEl = document.getElementById('annotationStatus');
+  if (!statusEl) return;
+
+  if (annotationState.currentFileIndex === -1) {
+    statusEl.textContent = 'No file loaded';
+  } else {
+    const file = annotationState.files[annotationState.currentFileIndex];
+    statusEl.innerHTML = `
+      <span>${file.name}</span>
+      <span>${annotationState.annotations.length} annotation${annotationState.annotations.length !== 1 ? 's' : ''}</span>
+    `;
+  }
+}
+
+// Export Functions
+window.exportAnnotations = function() {
+  const format = document.getElementById('exportFormatSelect')?.value || 'yolo';
+  const file = annotationState.files[annotationState.currentFileIndex];
+
+  if (!file) {
+    alert('No file loaded');
+    return;
+  }
+
+  let exportData = '';
+  const filename = file.name.replace(/\.[^/.]+$/, '');
+
+  if (format === 'yolo') {
+    exportData = exportToYOLO(file);
+    downloadFile(`${filename}.txt`, exportData);
+  } else if (format === 'coco') {
+    exportData = exportToCOCO([file]);
+    downloadFile(`${filename}.json`, JSON.stringify(exportData, null, 2));
+  } else if (format === 'custom') {
+    downloadFile(`${filename}.json`, JSON.stringify(file.annotations, null, 2));
+  }
+};
+
+window.exportAllAnnotations = function() {
+  const format = document.getElementById('exportFormatSelect')?.value || 'yolo';
+
+  if (annotationState.files.length === 0) {
+    alert('No files to export');
+    return;
+  }
+
+  if (format === 'yolo') {
+    annotationState.files.forEach(file => {
+      const data = exportToYOLO(file);
+      const filename = file.name.replace(/\.[^/.]+$/, '.txt');
+      downloadFile(filename, data);
+    });
+  } else if (format === 'coco') {
+    const data = exportToCOCO(annotationState.files);
+    downloadFile('annotations.json', JSON.stringify(data, null, 2));
+  } else if (format === 'custom') {
+    const data = {
+      files: annotationState.files.map(f => ({
+        name: f.name,
+        annotations: f.annotations
+      })),
+      labels: annotationState.labels
+    };
+    downloadFile('annotations.json', JSON.stringify(data, null, 2));
+  }
+};
+
+function exportToYOLO(file) {
+  const img = annotationState.currentImage;
+  const lines = [];
+
+  file.annotations.forEach(ann => {
+    if (ann.type === 'bbox') {
+      const labelIdx = annotationState.labels.findIndex(l => l.name === ann.label);
+      if (labelIdx === -1) return;
+
+      const [x, y, w, h] = ann.bbox;
+      const centerX = (x + w / 2) / img.width;
+      const centerY = (y + h / 2) / img.height;
+      const width = w / img.width;
+      const height = h / img.height;
+
+      lines.push(`${labelIdx} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`);
+    }
+  });
+
+  return lines.join('\n');
+}
+
+function exportToCOCO(files) {
+  const coco = {
+    images: [],
+    annotations: [],
+    categories: annotationState.labels.map((label, idx) => ({
+      id: idx + 1,
+      name: label.name,
+      supercategory: 'object'
+    }))
+  };
+
+  let annId = 1;
+
+  files.forEach((file, fileIdx) => {
+    coco.images.push({
+      id: fileIdx + 1,
+      file_name: file.name,
+      width: annotationState.currentImage?.width || 0,
+      height: annotationState.currentImage?.height || 0
+    });
+
+    file.annotations.forEach(ann => {
+      if (ann.type === 'bbox') {
+        const labelIdx = annotationState.labels.findIndex(l => l.name === ann.label);
+        if (labelIdx === -1) return;
+
+        const [x, y, w, h] = ann.bbox;
+        coco.annotations.push({
+          id: annId++,
+          image_id: fileIdx + 1,
+          category_id: labelIdx + 1,
+          bbox: [x, y, w, h],
+          area: w * h,
+          iscrowd: 0
+        });
+      }
+    });
+  });
+
+  return coco;
+}
+
+function downloadFile(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Keyboard Shortcuts
+function handleAnnotationKeyboard(e) {
+  // Only handle shortcuts when annotation tab is active
+  if (!document.getElementById('annotate-tab')?.classList.contains('active')) return;
+
+  // Handle polygon/segmentation completion
+  if (e.key === 'Enter' && annotationState.currentShape) {
+    if (annotationState.currentShape.type === 'polygon' && annotationState.currentShape.points.length >= 3) {
+      // Finish polygon
+      annotationState.annotations.push(annotationState.currentShape);
+      if (annotationState.currentFileIndex >= 0) {
+        annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+      }
+      addToHistory();
+      annotationState.currentShape = null;
+      annotationState.drawing = false;
+      renderCanvas();
+      renderAnnotationsList();
+      updateAnnotationStatus();
+    } else if (annotationState.currentShape.type === 'segmentation') {
+      // Finish segmentation
+      annotationState.annotations.push(annotationState.currentShape);
+      if (annotationState.currentFileIndex >= 0) {
+        annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+      }
+      addToHistory();
+      annotationState.currentShape = null;
+      annotationState.drawing = false;
+      renderCanvas();
+      renderAnnotationsList();
+      updateAnnotationStatus();
+    }
+    return;
+  }
+
+  // Cancel current shape
+  if (e.key === 'Escape' && annotationState.currentShape) {
+    annotationState.currentShape = null;
+    annotationState.drawing = false;
+    renderCanvas();
+    return;
+  }
+
+  switch(e.key.toLowerCase()) {
+    case 'b': selectTool('bbox'); break;
+    case 'o': selectTool('obb'); break;
+    case 'p': selectTool('polygon'); break;
+    case 's': selectTool('segmentation'); break;
+    case 'v': selectTool('select'); break;
+    case 'h': selectTool('pan'); break;
+    case 't': toggleAnnotationVisibility(); break;
+    case 'delete': deleteSelected(); break;
+    case '0': resetZoom(); break;
+    case '+': case '=': zoomIn(); break;
+    case '-': case '_': zoomOut(); break;
+    case 'z':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        undoAnnotation();
+      }
+      break;
+    case 'y':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        redoAnnotation();
+      }
+      break;
+    case '?':
+      // Show keyboard shortcuts help
+      showKeyboardHelp();
+      break;
+  }
+}
+
+// Keyboard Shortcuts Help
+function showKeyboardHelp() {
+  alert(`Keyboard Shortcuts:
+
+TOOLS:
+B - Bounding Box
+O - Oriented Bounding Box (hold Shift to rotate)
+P - Polygon (click points, Enter to finish)
+S - Segmentation (brush tool, Enter to finish)
+V - Select
+H - Pan
+
+ACTIONS:
+Enter - Finish polygon/segmentation
+Escape - Cancel current shape
+Delete - Delete selected annotation
+T - Toggle annotation visibility
+
+ZOOM:
+0 - Reset zoom
++/= - Zoom in
+-/_ - Zoom out
+Mouse Wheel - Zoom in/out
+
+UNDO/REDO:
+Ctrl+Z - Undo
+Ctrl+Y - Redo
+
+? - Show this help`);
+}
+
+// AI Auto-Annotate
+window.runAutoAnnotate = async function() {
+  if (annotationState.currentFileIndex === -1) {
+    alert('Please load an image first');
+    return;
+  }
+
+  const model = document.getElementById('aiModelSelect')?.value || 'yolov8n';
+  const file = annotationState.files[annotationState.currentFileIndex];
+
+  if (!file) {
+    alert('No file loaded');
+    return;
+  }
+
+  try {
+    // Show loading indicator
+    const statusEl = document.getElementById('annotationStatus');
+    const originalStatus = statusEl.innerHTML;
+    statusEl.innerHTML = `<span>Running AI detection with ${model}...</span>`;
+
+    // Convert data URL to blob
+    const response = await fetch(file.data);
+    const blob = await response.blob();
+
+    // Create FormData
+    const formData = new FormData();
+    formData.append('file', blob, file.name);
+    formData.append('model', model);
+    formData.append('confidence', '0.25');
+    formData.append('iou', '0.45');
+
+    // Call AI backend
+    const aiResponse = await fetch('http://localhost:8000/detect', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!aiResponse.ok) {
+      throw new Error(`AI backend error: ${aiResponse.status} ${aiResponse.statusText}`);
+    }
+
+    const result = await aiResponse.json();
+
+    if (!result.success) {
+      throw new Error('Detection failed');
+    }
+
+    // Add detections as annotations
+    let addedCount = 0;
+    result.detections.forEach(detection => {
+      // Check if we have a label for this class
+      let label = annotationState.labels.find(l => l.name === detection.class_name);
+
+      if (!label) {
+        // Create label automatically
+        const color = LABEL_COLORS[annotationState.labels.length % LABEL_COLORS.length];
+        label = {
+          name: detection.class_name,
+          color: color,
+          count: 0
+        };
+        annotationState.labels.push(label);
+        renderLabelList();
+      }
+
+      // Add annotation
+      annotationState.annotations.push({
+        type: 'bbox',
+        bbox: detection.bbox,
+        label: detection.class_name,
+        confidence: detection.confidence,
+        aiGenerated: true
+      });
+      addedCount++;
+    });
+
+    // Save to file
+    if (annotationState.currentFileIndex >= 0) {
+      annotationState.files[annotationState.currentFileIndex].annotations = annotationState.annotations;
+    }
+
+    addToHistory();
+    renderCanvas();
+    renderAnnotationsList();
+    statusEl.innerHTML = originalStatus;
+    updateAnnotationStatus();
+
+    alert(`AI Detection Complete!\n\nModel: ${model}\nDetected: ${result.count} objects\nAdded: ${addedCount} annotations`);
+
+  } catch (error) {
+    console.error('Auto-annotation error:', error);
+    alert(`Auto-annotation failed: ${error.message}\n\nMake sure the AI backend is running:\npython ai_backend.py\n\nOr start with:\nuvicorn ai_backend:app --host 0.0.0.0 --port 8000`);
+    updateAnnotationStatus();
+  }
+};
+
+window.runAutoTrack = async function() {
+  alert('Video Object Tracking\n\nTo use video tracking:\n\n1. Start the AI backend:\n   python ai_backend.py\n\n2. Upload a video file in the Files section\n\n3. Click "Track Video" to track objects across frames\n\nThe backend will:\n- Extract frames from video\n- Run YOLO tracking\n- Return frame-by-frame annotations\n\nNote: Video upload support will be added in Phase 2.2');
+};
+
+// ==================== END ANNOTATION SYSTEM ====================
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadCameras();
@@ -1266,6 +2323,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDrives(); // Load drives for folder browser
   loadSourceImages(); // Initialize preview dropdown with placeholder
   updateCaptureCount();
+
+  // Initialize annotation system
+  initAnnotationCanvas();
 
   // Update estimates when inputs change
   document.getElementById('augPerBg')?.addEventListener('input', updateEstimates);

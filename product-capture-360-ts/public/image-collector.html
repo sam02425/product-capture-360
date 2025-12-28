@@ -450,6 +450,332 @@
       object-fit: contain;
     }
 
+    /* Annotation Layout */
+    .annotation-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr 280px;
+      gap: 1rem;
+      height: calc(100vh - 200px);
+      min-height: 600px;
+    }
+
+    .annotation-sidebar,
+    .annotation-properties {
+      background: var(--bg-card);
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      padding: 1rem;
+    }
+
+    .annotation-main {
+      background: var(--bg-card);
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Sidebar Sections */
+    .sidebar-section {
+      background: var(--bg-dark);
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .sidebar-section-header {
+      background: var(--bg-hover);
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-section-content {
+      padding: 1rem;
+    }
+
+    /* File List */
+    .file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .file-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--primary);
+    }
+
+    .file-item.active {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .file-thumbnail {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 0.25rem;
+    }
+
+    .file-info {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .file-name {
+      font-size: 0.875rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-meta {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* Label List */
+    .label-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .label-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .label-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .label-item.active {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.1);
+    }
+
+    .label-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+    }
+
+    .label-name {
+      flex: 1;
+      font-size: 0.875rem;
+      color: var(--text);
+    }
+
+    .label-count {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      padding: 0.125rem 0.5rem;
+      background: var(--bg-dark);
+      border-radius: 0.25rem;
+    }
+
+    .label-delete {
+      background: none;
+      border: none;
+      color: var(--danger);
+      cursor: pointer;
+      padding: 0.25rem;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .label-item:hover .label-delete {
+      opacity: 1;
+    }
+
+    /* Tool Grid */
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+    }
+
+    .tool-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.75rem 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: var(--text);
+    }
+
+    .tool-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--primary);
+    }
+
+    .tool-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+
+    /* Toolbar */
+    .annotation-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      background: var(--bg-dark);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .toolbar-btn {
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.875rem;
+    }
+
+    .toolbar-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--primary);
+    }
+
+    .toolbar-btn:active {
+      background: var(--primary);
+    }
+
+    /* Canvas Container */
+    .annotation-canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #annotationCanvas {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    #annotationOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+
+    .annotation-status {
+      padding: 0.75rem 1rem;
+      background: var(--bg-dark);
+      border-top: 1px solid var(--border);
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Annotations List */
+    .annotations-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .annotation-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .annotation-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .annotation-item.active {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.1);
+    }
+
+    .annotation-icon {
+      font-size: 1.25rem;
+    }
+
+    .annotation-details {
+      flex: 1;
+    }
+
+    .annotation-label {
+      font-size: 0.875rem;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .annotation-coords {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
       .container {
@@ -461,6 +787,14 @@
       .header {
         flex-direction: column;
         gap: 1rem;
+      }
+      .annotation-layout {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+      .annotation-sidebar,
+      .annotation-properties {
+        max-height: 400px;
       }
     }
   </style>
@@ -486,6 +820,7 @@
     <div class="tabs">
       <button class="tab active" onclick="switchTab('capture')">📸 Capture</button>
       <button class="tab" onclick="switchTab('augment')">🎨 Augmentation</button>
+      <button class="tab" onclick="switchTab('annotate')">🏷️ Annotation</button>
       <button class="tab" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
       <button class="tab" onclick="switchTab('versions')">📦 Versions</button>
       <button class="tab" onclick="switchTab('docs')">📚 Documentation</button>
@@ -1111,8 +1446,162 @@
         </div>
       </div>
     </div>
+
+    <!-- Tab 4: Annotation -->
+    <div class="tab-content" id="annotate-tab">
+      <div class="annotation-layout">
+        <!-- Left Sidebar -->
+        <div class="annotation-sidebar">
+          <!-- Files Section -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">📁 Files</div>
+            <div class="sidebar-section-content">
+              <input type="file" id="annotationFileInput" accept="image/*,video/*" multiple style="display: none;">
+              <button class="btn btn-primary" style="width: 100%; margin-bottom: 0.5rem;" onclick="document.getElementById('annotationFileInput').click()">
+                📂 Upload Files
+              </button>
+              <div id="annotationFileList" class="file-list"></div>
+            </div>
+          </div>
+
+          <!-- Labels Section -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">🏷️ Labels</div>
+            <div class="sidebar-section-content">
+              <div style="display: flex; gap: 0.25rem; margin-bottom: 0.5rem;">
+                <input type="text" id="newLabelInput" placeholder="New label..." style="flex: 1; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text); font-size: 0.875rem;">
+                <button class="btn btn-primary" onclick="addLabel()" style="padding: 0.5rem 0.75rem;">+</button>
+              </div>
+              <div id="labelList" class="label-list"></div>
+            </div>
+          </div>
+
+          <!-- Tools Section -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">🛠️ Tools</div>
+            <div class="sidebar-section-content">
+              <div class="tool-grid">
+                <button class="tool-btn active" id="tool-bbox" onclick="selectTool('bbox')" title="Bounding Box (B)">
+                  <span style="font-size: 1.5rem;">⬜</span>
+                  <span style="font-size: 0.75rem;">BBox</span>
+                </button>
+                <button class="tool-btn" id="tool-obb" onclick="selectTool('obb')" title="Oriented Bounding Box (O)">
+                  <span style="font-size: 1.5rem;">📐</span>
+                  <span style="font-size: 0.75rem;">OBB</span>
+                </button>
+                <button class="tool-btn" id="tool-polygon" onclick="selectTool('polygon')" title="Polygon (P)">
+                  <span style="font-size: 1.5rem;">⬡</span>
+                  <span style="font-size: 0.75rem;">Polygon</span>
+                </button>
+                <button class="tool-btn" id="tool-segmentation" onclick="selectTool('segmentation')" title="Segmentation (S)">
+                  <span style="font-size: 1.5rem;">🎨</span>
+                  <span style="font-size: 0.75rem;">Segment</span>
+                </button>
+                <button class="tool-btn" id="tool-select" onclick="selectTool('select')" title="Select (V)">
+                  <span style="font-size: 1.5rem;">👆</span>
+                  <span style="font-size: 0.75rem;">Select</span>
+                </button>
+                <button class="tool-btn" id="tool-pan" onclick="selectTool('pan')" title="Pan (H)">
+                  <span style="font-size: 1.5rem;">✋</span>
+                  <span style="font-size: 0.75rem;">Pan</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Assist Section -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">🤖 AI Assist</div>
+            <div class="sidebar-section-content">
+              <select id="aiModelSelect" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text); font-size: 0.875rem;">
+                <option value="yolov8n">YOLOv8 Nano</option>
+                <option value="yolov8s">YOLOv8 Small</option>
+                <option value="yolov8m">YOLOv8 Medium</option>
+                <option value="yolov11n">YOLOv11 Nano</option>
+                <option value="yolov11s">YOLOv11 Small</option>
+                <option value="sam2">SAM2 Segment</option>
+              </select>
+              <button class="btn btn-primary" style="width: 100%; margin-bottom: 0.5rem;" onclick="runAutoAnnotate()">
+                ✨ Auto-Annotate
+              </button>
+              <button class="btn" style="width: 100%; background: var(--bg-dark); border: 1px solid var(--border);" onclick="runAutoTrack()">
+                🎬 Track Video
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main Canvas Area -->
+        <div class="annotation-main">
+          <div class="annotation-toolbar">
+            <div class="toolbar-group">
+              <button class="toolbar-btn" onclick="zoomIn()" title="Zoom In (+)">🔍+</button>
+              <button class="toolbar-btn" onclick="zoomOut()" title="Zoom Out (-)">🔍-</button>
+              <button class="toolbar-btn" onclick="resetZoom()" title="Reset Zoom (0)">↺</button>
+              <span id="zoomLevel" style="color: var(--text-dim); font-size: 0.875rem; padding: 0 0.5rem;">100%</span>
+            </div>
+            <div class="toolbar-group">
+              <button class="toolbar-btn" onclick="undoAnnotation()" title="Undo (Ctrl+Z)">↶</button>
+              <button class="toolbar-btn" onclick="redoAnnotation()" title="Redo (Ctrl+Y)">↷</button>
+              <button class="toolbar-btn" onclick="deleteSelected()" title="Delete (Delete)">🗑️</button>
+            </div>
+            <div class="toolbar-group">
+              <button class="toolbar-btn" onclick="toggleAnnotationVisibility()" title="Toggle Visibility (T)">👁️</button>
+              <button class="toolbar-btn" onclick="exportAnnotations()" title="Export">💾</button>
+            </div>
+          </div>
+          <div class="annotation-canvas-container">
+            <canvas id="annotationCanvas"></canvas>
+            <div id="annotationOverlay"></div>
+          </div>
+          <div id="annotationStatus" class="annotation-status">
+            No file loaded
+          </div>
+        </div>
+
+        <!-- Right Properties Panel -->
+        <div class="annotation-properties">
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">📊 Properties</div>
+            <div class="sidebar-section-content">
+              <div id="annotationProperties">
+                <p style="color: var(--text-dim); font-size: 0.875rem; text-align: center; padding: 2rem 1rem;">
+                  Select an annotation to view properties
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">📋 Annotations</div>
+            <div class="sidebar-section-content">
+              <div id="annotationsList" class="annotations-list"></div>
+            </div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">💾 Export</div>
+            <div class="sidebar-section-content">
+              <select id="exportFormatSelect" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text); font-size: 0.875rem;">
+                <option value="yolo">YOLO (.txt)</option>
+                <option value="yolo-obb">YOLO OBB (.txt)</option>
+                <option value="coco">COCO (.json)</option>
+                <option value="voc">Pascal VOC (.xml)</option>
+                <option value="custom">Custom JSON</option>
+              </select>
+              <button class="btn btn-primary" style="width: 100%;" onclick="exportAnnotations()">
+                📥 Export Current
+              </button>
+              <button class="btn" style="width: 100%; margin-top: 0.5rem; background: var(--bg-dark); border: 1px solid var(--border);" onclick="exportAllAnnotations()">
+                📦 Export All
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <script src="/roboflow.js"></script>
+  <script src="/image-collector.js"></script>
 </body>
 </html>

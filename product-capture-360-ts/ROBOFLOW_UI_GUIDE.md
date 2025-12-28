@@ -12,7 +12,7 @@
 
 Open in your browser:
 ```
-http://localhost:5002/roboflow.html
+http://localhost:5002/image-collector.html
 ```
 
 Or just:
