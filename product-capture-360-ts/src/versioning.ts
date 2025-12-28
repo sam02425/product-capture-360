@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * Dataset Versioning System (Roboflow-style)
+ * Dataset Versioning System - Image Collector by EyeAI
  *
  * Features:
  * - Version tracking (v1, v2, v3...)

@@ -633,6 +633,40 @@
             </label>
           </div>
 
+          <div class="card-subtitle" style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--primary); font-weight: 600;">
+            🏪 Retail-Specific Augmentations
+          </div>
+          <div class="toggle-group">
+            <label class="toggle active" id="toggle-shelfPlacement">
+              <input type="checkbox" checked onchange="toggleAug('shelfPlacement')">
+              <span>📚 Shelf Placement Variations</span>
+            </label>
+            <label class="toggle active" id="toggle-storeLighting">
+              <input type="checkbox" checked onchange="toggleAug('storeLighting')">
+              <span>💡 Store Lighting (LED/Fluorescent/Natural)</span>
+            </label>
+            <label class="toggle" id="toggle-occlusion">
+              <input type="checkbox" onchange="toggleAug('occlusion')">
+              <span>🚧 Product Occlusion (Partially Hidden)</span>
+            </label>
+            <label class="toggle active" id="toggle-viewAngle">
+              <input type="checkbox" checked onchange="toggleAug('viewAngle')">
+              <span>📐 View Angles (Top/Eye/Below Level)</span>
+            </label>
+            <label class="toggle" id="toggle-distanceScale">
+              <input type="checkbox" onchange="toggleAug('distanceScale')">
+              <span>📏 Distance Scale (Near/Mid/Far)</span>
+            </label>
+            <label class="toggle" id="toggle-glare">
+              <input type="checkbox" onchange="toggleAug('glare')">
+              <span>✨ Glare & Reflections</span>
+            </label>
+            <label class="toggle" id="toggle-shoppingContext">
+              <input type="checkbox" onchange="toggleAug('shoppingContext')">
+              <span>🛒 Shopping Context (Cart/Hand/Basket)</span>
+            </label>
+          </div>
+
           <div class="form-group" style="margin-top: 1.5rem;">
             <label>Augmentations Per Background</label>
             <input type="number" id="augPerBg" value="5" min="1" max="20">
@@ -830,14 +864,33 @@
       <div class="grid grid-2">
         <div class="card">
           <div class="card-title">📦 Dataset Versions</div>
+          <div class="card-subtitle">Complete version history with metadata</div>
+
+          <div style="margin-bottom: 1rem;">
+            <button class="btn btn-success btn-full" onclick="exportVersionMetadata()">📊 Export Metadata (JSON)</button>
+          </div>
+
           <div class="version-list" id="versionList"></div>
         </div>
 
         <div class="card">
           <div class="card-title">📊 Version Details</div>
+          <div class="card-subtitle">Click a version to view comprehensive details</div>
+
+          <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+            <select id="compareVersion1" style="flex: 1;">
+              <option value="">Select version 1...</option>
+            </select>
+            <span style="padding: 0.5rem;">vs</span>
+            <select id="compareVersion2" style="flex: 1;">
+              <option value="">Select version 2...</option>
+            </select>
+            <button class="btn btn-primary" onclick="compareVersions()">🔍 Compare</button>
+          </div>
+
           <div id="versionDetails">
             <div style="text-align: center; padding: 2rem; color: var(--text-dim);">
-              Select a version to view details
+              Select a version to view details or use comparison tool above
             </div>
           </div>
         </div>
@@ -881,7 +934,7 @@
         <div style="margin-top: 2rem;">
           <h3 style="color: var(--primary); margin-bottom: 1rem;">🎨 Stage 2: Data Augmentation</h3>
           <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--warning);">
-            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Augmentation Techniques:</h4>
+            <h4 style="color: var(--success); margin-bottom: 0.5rem;">Standard Augmentation Techniques:</h4>
             <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
               <li><strong>Geometric Transformations:</strong>
                 <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
@@ -893,6 +946,7 @@
               <li><strong>Color Augmentation:</strong>
                 <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
                   <li>Brightness adjustment (±30%)</li>
+                  <li>Contrast & Saturation control</li>
                   <li>Grayscale conversion</li>
                 </ul>
               </li>
@@ -903,6 +957,17 @@
                   <li>Multi-background composition</li>
                 </ul>
               </li>
+            </ul>
+
+            <h4 style="color: var(--primary); margin-top: 1rem; margin-bottom: 0.5rem;">🏪 Retail-Specific Augmentations:</h4>
+            <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+              <li><strong>Shelf Placement Variations:</strong> Simulate different shelf positions, stacking arrangements, and product orientation on retail shelves</li>
+              <li><strong>Store Lighting Conditions:</strong> Replicate LED, fluorescent, and natural lighting found in retail environments with varying color temperatures</li>
+              <li><strong>Product Occlusion:</strong> Simulate partial hiding by other products, hands, or shopping equipment to train robust detection</li>
+              <li><strong>View Angles:</strong> Generate top-down (overhead cameras), eye-level, and below-eye-level perspectives for diverse camera placements</li>
+              <li><strong>Distance Scale Variations:</strong> Create near, mid, and far-distance views to handle different shelf-to-camera distances</li>
+              <li><strong>Glare & Reflections:</strong> Add realistic glare effects from store lighting and glass surfaces common in retail settings</li>
+              <li><strong>Shopping Context:</strong> Include contextual elements like shopping carts, baskets, and hands to improve real-world accuracy</li>
             </ul>
             <h4 style="color: var(--success); margin-top: 1rem; margin-bottom: 0.5rem;">Models Used:</h4>
             <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
@@ -994,7 +1059,47 @@
             <li>Apply varied augmentations to increase dataset diversity</li>
             <li>Monitor queue status during high-speed capture sessions</li>
             <li>Version your datasets before major changes</li>
+            <li><strong>For Retail Models:</strong> Enable retail-specific augmentations (shelf placement, store lighting, occlusion) to improve real-world accuracy</li>
+            <li>Use version comparison tool to track improvements across dataset iterations</li>
+            <li>Export version metadata regularly for documentation and reproducibility</li>
           </ul>
+        </div>
+
+        <div style="margin-top: 2rem;">
+          <h3 style="color: var(--primary); margin-bottom: 1rem;">🔄 Complete Pipeline Workflow</h3>
+          <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--primary);">
+            <div style="display: grid; gap: 1rem;">
+              <div style="background: rgba(99, 102, 241, 0.1); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid var(--primary);">
+                <div style="font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">Step 1: Capture → Select Storage & Connect Camera</div>
+                <div style="color: var(--text); font-size: 0.875rem;">Choose storage location, connect USB camera, configure capture rate (30-180/min), and run session</div>
+              </div>
+              <div style="text-align: center; color: var(--text-dim); font-size: 1.5rem;">↓</div>
+              <div style="background: rgba(245, 158, 11, 0.1); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid var(--warning);">
+                <div style="font-weight: 600; color: var(--warning); margin-bottom: 0.5rem;">Step 2: Augment → Configure & Preview</div>
+                <div style="color: var(--text); font-size: 0.875rem;">Select product folder, enable standard and retail-specific augmentations, preview results with batch preview</div>
+              </div>
+              <div style="text-align: center; color: var(--text-dim); font-size: 1.5rem;">↓</div>
+              <div style="background: rgba(16, 185, 129, 0.1); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid var(--success);">
+                <div style="font-weight: 600; color: var(--success); margin-bottom: 0.5rem;">Step 3: Generate → Create Training Dataset</div>
+                <div style="color: var(--text); font-size: 0.875rem;">Select export formats (YOLOv5/v8/v11, COCO), configure train/val split, add description, and generate</div>
+              </div>
+              <div style="text-align: center; color: var(--text-dim); font-size: 1.5rem;">↓</div>
+              <div style="background: rgba(168, 85, 247, 0.1); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #a855f7;">
+                <div style="font-weight: 600; color: #a855f7; margin-bottom: 0.5rem;">Step 4: Version → Track & Compare</div>
+                <div style="color: var(--text); font-size: 0.875rem;">View version history, compare datasets, export metadata, and download for training</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(99, 102, 241, 0.05); border-radius: 0.5rem;">
+              <h4 style="color: var(--success); margin-bottom: 0.5rem;">🎯 Data Versioning Features:</h4>
+              <ul style="color: var(--text); line-height: 1.8; margin-left: 1.5rem;">
+                <li><strong>Automatic Version Tracking:</strong> Each dataset generation creates a new version with timestamp and metadata</li>
+                <li><strong>Version Comparison:</strong> Side-by-side comparison of dataset sizes, augmentations, and configurations</li>
+                <li><strong>Metadata Export:</strong> Export comprehensive JSON metadata for all versions including stats, configs, and descriptions</li>
+                <li><strong>Version Details:</strong> View complete information including source images, train/val split, augmentations used, and export formats</li>
+              </ul>
+            </div>
+          </div>
         </div>
 
         <div style="margin-top: 2rem; padding: 1rem; background: var(--bg-dark); border-radius: 0.5rem; text-align: center;">

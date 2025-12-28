@@ -1,4 +1,5 @@
-# 🎨 Roboflow-Style UI - User Guide
+# 🎨 Image Collector UI - User Guide
+## Powered by EyeAI
 
 ## ✅ System Verified Working!
 
@@ -18,7 +19,7 @@ Or just:
 ```
 http://localhost:5002/
 ```
-(Automatically redirects to Roboflow UI)
+(Automatically redirects to Image Collector UI)
 
 ---
 
@@ -161,7 +162,7 @@ http://localhost:5002/
 
 ### **Tab 4: Versions** (Dataset Management)
 
-**Roboflow-style versioning!**
+**Professional dataset versioning with comparison tools!**
 
 1. **View All Versions**
    - Listed in reverse chronological order
@@ -381,4 +382,4 @@ v3: More augmentations
 
 ---
 
-**Built with ❤️ inspired by Roboflow** 🚀
+**Built with ❤️ by EyeAI - Image Collector** 🚀

@@ -614,7 +614,7 @@ app.delete<{ Params: { version: string } }>('/api/versions/:version', async (req
   return { success, message: success ? 'Version deleted' : 'Version not found' };
 });
 
-app.get('/', async (req: any, reply: any) => { reply.redirect('/roboflow.html'); });
+app.get('/', async (req: any, reply: any) => { reply.redirect('/image-collector.html'); });
 
 async function start() {
   try {
@@ -629,7 +629,7 @@ async function start() {
 
     app.log.info(`✨ Product Capture 360 server started`);
     app.log.info(`🌍 Server URL: http://localhost:${port}`);
-    app.log.info(`🎨 Roboflow UI: http://localhost:${port}/roboflow.html`);
+    app.log.info(`🎨 Image Collector UI: http://localhost:${port}/image-collector.html`);
     app.log.info(`💚 Health check: http://localhost:${port}/health`);
 
     // Graceful shutdown

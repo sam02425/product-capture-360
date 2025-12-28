@@ -1,9 +1,10 @@
-// Roboflow-style UI JavaScript
+// Image Collector UI JavaScript - Powered by EyeAI
 
 const state = {
   currentPath: '',
   backgrounds: [],
   augmentations: {
+    // Standard augmentations
     zoom: true,
     lighting: true,
     color: true,
@@ -12,6 +13,14 @@ const state = {
     flip: false,
     blur: false,
     noise: false,
+    // Retail-specific augmentations
+    shelfPlacement: true,
+    storeLighting: true,
+    occlusion: false,
+    viewAngle: true,
+    distanceScale: false,
+    glare: false,
+    shoppingContext: false,
   },
   capturedCount: 0,
   versions: [],
@@ -69,6 +78,8 @@ window.createStorageFolder = createStorageFolder;
 window.useCurrentStoragePath = useCurrentStoragePath;
 window.loadStorageBrowser = loadStorageBrowser;
 window.stopSession = stopSession;
+window.compareVersions = compareVersions;
+window.exportVersionMetadata = exportVersionMetadata;
 
 // Camera functions
 async function loadCameras() {
@@ -630,6 +641,24 @@ async function loadVersions() {
     list.appendChild(item);
   });
 
+  // Populate comparison dropdowns
+  const select1 = document.getElementById('compareVersion1');
+  const select2 = document.getElementById('compareVersion2');
+  select1.innerHTML = '<option value="">Select version 1...</option>';
+  select2.innerHTML = '<option value="">Select version 2...</option>';
+
+  versions.forEach(v => {
+    const opt1 = document.createElement('option');
+    opt1.value = v.version;
+    opt1.textContent = `v${v.version} - ${v.productName} (${v.totalImages} imgs)`;
+    select1.appendChild(opt1);
+
+    const opt2 = document.createElement('option');
+    opt2.value = v.version;
+    opt2.textContent = `v${v.version} - ${v.productName} (${v.totalImages} imgs)`;
+    select2.appendChild(opt2);
+  });
+
   // Show first version details
   if (versions.length > 0) {
     showVersionDetails(versions[versions.length - 1]);
@@ -834,6 +863,11 @@ function selectProductFolder(folderPath, folderName) {
 
   // Load images from this folder into preview dropdown
   loadSourceImages();
+
+  // Auto-generate batch preview to show images immediately
+  setTimeout(() => {
+    batchGeneratePreview();
+  }, 500);
 
   console.log('Selected product folder:', folderPath);
 }
@@ -1045,6 +1079,184 @@ async function useCurrentStoragePath() {
     console.error('Error setting storage location:', error);
     alert('Failed to set storage location: ' + error.message);
   }
+}
+
+// Version comparison and metadata export
+function compareVersions() {
+  const v1Num = parseInt(document.getElementById('compareVersion1').value);
+  const v2Num = parseInt(document.getElementById('compareVersion2').value);
+
+  if (!v1Num || !v2Num) {
+    alert('Please select two versions to compare');
+    return;
+  }
+
+  if (v1Num === v2Num) {
+    alert('Please select different versions');
+    return;
+  }
+
+  const v1 = state.versions.find(v => v.version === v1Num);
+  const v2 = state.versions.find(v => v.version === v2Num);
+
+  if (!v1 || !v2) {
+    alert('Versions not found');
+    return;
+  }
+
+  const details = document.getElementById('versionDetails');
+
+  // Calculate differences
+  const imageDiff = v2.totalImages - v1.totalImages;
+  const imageDiffPercent = ((imageDiff / v1.totalImages) * 100).toFixed(1);
+  const trainDiff = v2.trainImages - v1.trainImages;
+  const valDiff = v2.valImages - v1.valImages;
+
+  // Compare augmentations
+  const v1Augs = Object.entries(v1.augmentations).filter(([k, v]) => v).map(([k]) => k);
+  const v2Augs = Object.entries(v2.augmentations).filter(([k, v]) => v).map(([k]) => k);
+  const addedAugs = v2Augs.filter(a => !v1Augs.includes(a));
+  const removedAugs = v1Augs.filter(a => !v2Augs.includes(a));
+
+  details.innerHTML = `
+    <div style="padding: 1rem;">
+      <h3 style="font-size: 1.5rem; margin-bottom: 1rem; color: var(--primary);">Version Comparison</h3>
+
+      <div class="grid grid-2" style="margin-bottom: 1.5rem;">
+        <div style="background: var(--bg-dark); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid var(--primary);">
+          <h4 style="margin-bottom: 0.5rem;">v${v1.version} - ${v1.productName}</h4>
+          <div style="font-size: 0.875rem; color: var(--text-dim);">${new Date(v1.created).toLocaleString()}</div>
+        </div>
+        <div style="background: var(--bg-dark); padding: 1rem; border-radius: 0.5rem; border-left: 3px solid var(--success);">
+          <h4 style="margin-bottom: 0.5rem;">v${v2.version} - ${v2.productName}</h4>
+          <div style="font-size: 0.875rem; color: var(--text-dim);">${new Date(v2.created).toLocaleString()}</div>
+        </div>
+      </div>
+
+      <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1.5rem;">
+        <h4 style="color: var(--success); margin-bottom: 1rem;">📊 Dataset Size Changes</h4>
+        <div class="stats">
+          <div class="stat-card">
+            <div class="stat-value">${v1.totalImages} → ${v2.totalImages}</div>
+            <div class="stat-label">Total Images</div>
+            <div style="font-size: 0.875rem; color: ${imageDiff > 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${imageDiff > 0 ? '+' : ''}${imageDiff} (${imageDiffPercent > 0 ? '+' : ''}${imageDiffPercent}%)
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${v1.trainImages} → ${v2.trainImages}</div>
+            <div class="stat-label">Train Images</div>
+            <div style="font-size: 0.875rem; color: ${trainDiff > 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${trainDiff > 0 ? '+' : ''}${trainDiff}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${v1.valImages} → ${v2.valImages}</div>
+            <div class="stat-label">Val Images</div>
+            <div style="font-size: 0.875rem; color: ${valDiff > 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${valDiff > 0 ? '+' : ''}${valDiff}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1.5rem;">
+        <h4 style="color: var(--success); margin-bottom: 1rem;">🎨 Augmentation Changes</h4>
+        ${addedAugs.length > 0 ? `
+          <div style="margin-bottom: 1rem;">
+            <div style="color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">✓ Added:</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+              ${addedAugs.map(a => `<span style="background: rgba(16, 185, 129, 0.2); color: var(--success); padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.875rem;">${a}</span>`).join('')}
+            </div>
+          </div>
+        ` : ''}
+        ${removedAugs.length > 0 ? `
+          <div>
+            <div style="color: var(--danger); font-weight: 600; margin-bottom: 0.5rem;">✗ Removed:</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+              ${removedAugs.map(a => `<span style="background: rgba(239, 68, 68, 0.2); color: var(--danger); padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.875rem;">${a}</span>`).join('')}
+            </div>
+          </div>
+        ` : ''}
+        ${addedAugs.length === 0 && removedAugs.length === 0 ? `
+          <div style="color: var(--text-dim); text-align: center;">No augmentation changes</div>
+        ` : ''}
+      </div>
+
+      <div style="background: var(--bg-dark); padding: 1.5rem; border-radius: 0.5rem;">
+        <h4 style="color: var(--success); margin-bottom: 1rem;">🔧 Configuration Comparison</h4>
+        <div style="display: grid; grid-template-columns: auto auto auto; gap: 1rem; font-size: 0.875rem;">
+          <div style="font-weight: 600;">Setting</div>
+          <div style="font-weight: 600; text-align: center;">v${v1.version}</div>
+          <div style="font-weight: 600; text-align: center;">v${v2.version}</div>
+
+          <div style="color: var(--text-dim);">Segmentation</div>
+          <div style="text-align: center;">${v1.segmentationModel}</div>
+          <div style="text-align: center;">${v2.segmentationModel}</div>
+
+          <div style="color: var(--text-dim);">Backgrounds</div>
+          <div style="text-align: center;">${v1.backgroundImages.length}</div>
+          <div style="text-align: center;">${v2.backgroundImages.length}</div>
+
+          <div style="color: var(--text-dim);">Export Formats</div>
+          <div style="text-align: center;">${v1.exportFormats.join(', ')}</div>
+          <div style="text-align: center;">${v2.exportFormats.join(', ')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function exportVersionMetadata() {
+  if (state.versions.length === 0) {
+    alert('No versions to export');
+    return;
+  }
+
+  // Create comprehensive metadata export
+  const metadata = {
+    exportedAt: new Date().toISOString(),
+    exportedBy: 'Image Collector - EyeAI',
+    totalVersions: state.versions.length,
+    versions: state.versions.map(v => ({
+      version: v.version,
+      productName: v.productName,
+      created: v.created,
+      sourceFolder: v.sourceFolder,
+      stats: {
+        sourceImages: v.sourceImages,
+        totalImages: v.totalImages,
+        trainImages: v.trainImages,
+        valImages: v.valImages,
+      },
+      configuration: {
+        segmentationModel: v.segmentationModel,
+        augmentations: v.augmentations,
+        backgroundImages: v.backgroundImages,
+        exportFormats: v.exportFormats,
+      },
+      description: v.description || '',
+      metrics: v.metrics || null,
+    })),
+    summary: {
+      totalImages: state.versions.reduce((sum, v) => sum + v.totalImages, 0),
+      latestVersion: state.versions.length > 0 ? state.versions[state.versions.length - 1].version : 0,
+      products: [...new Set(state.versions.map(v => v.productName))],
+    },
+  };
+
+  // Download as JSON
+  const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `dataset_versions_metadata_${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  alert(`Exported metadata for ${state.versions.length} versions`);
 }
 
 // Initialize
