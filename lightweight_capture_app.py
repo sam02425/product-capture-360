@@ -19,6 +19,12 @@
 """
 
 import os, cv2, time, psutil, threading, signal, sys, atexit, platform, re, csv, json, gc
+try:
+    # Optional fast JPEG encoder; falls back to OpenCV if unavailable
+    from turbojpeg import TurboJPEG, TJPF_BGR
+except Exception:
+    TurboJPEG = None
+    TJPF_BGR = None
 import numpy as np
 from datetime import datetime
 from pathlib import Path
@@ -139,7 +145,12 @@ class CaptureSystem:
         self.last_open_ts = time.time()
 
         # Global preview encoder (fan-out)
-        self.preview_fps = 10
+        self.preview_fps = 8  # lower FPS to reduce encode pressure
+        self.jpeg_quality_preview = 55  # lighter preview compression for CPU relief
+        self.preview_max_width = 720  # smaller preview to cut resize+encode cost
+        # Perf metrics (EWMA)
+        self.preview_encode_ms_last = 0.0
+        self.preview_encode_ms_avg = 0.0
         self.preview_jpeg = b""
         self.preview_lock = threading.Lock()
         self.preview_stop = threading.Event()
@@ -151,10 +162,25 @@ class CaptureSystem:
         self.preview_clients = 0
 
         # Async saver
+        self.jpeg_quality_capture = 88  # balanced capture quality vs CPU cost
         self.save_q = deque(maxlen=1000)  # drop-oldest strategy when overwhelmed
         self.saver_stop = threading.Event()
+        self.saver_write_ms_last = 0.0
+        self.saver_write_ms_avg = 0.0
         self.saver_thread = threading.Thread(target=self._saver_loop, name="DiskSaver", daemon=True)
         self.saver_thread.start()
+
+        # Fast JPEG if available
+        self.turbojpeg = None
+        try:
+            if TurboJPEG:
+                self.turbojpeg = TurboJPEG()
+                log_info("TurboJPEG available: using accelerated JPEG encoding")
+            else:
+                log_info("TurboJPEG not available: using OpenCV JPEG encoding")
+        except Exception as e:
+            self.turbojpeg = None
+            log_warn(f"TurboJPEG init failed; falling back to OpenCV: {e}")
 
         # Storage
         self.default_folder = str(Path.home() / "360Photo" / "captures")
@@ -168,6 +194,7 @@ class CaptureSystem:
         self.session_rate = 24  # per minute
         self.session_duration_s = None
         self.session_start_time = None
+        self.session_start_mono = None
         self.session_captures = 0
         self.session_output_dir = None
         self.session_product_name = None
@@ -224,6 +251,23 @@ class CaptureSystem:
             pass
 
     def _try_formats_and_resolutions(self, index, backend):
+        # First, try a neutral open without forcing FOURCC (AVFoundation often ignores/blocks it)
+        try:
+            cap0 = cv2.VideoCapture(index, backend)
+            if cap0 and cap0.isOpened():
+                try:
+                    # Probe by grabbing a few frames without any format pressure
+                    for _ in range(3):
+                        cap0.grab()
+                    ret0, fr0 = cap0.retrieve()
+                    if ret0 and fr0 is not None and fr0.size:
+                        return cap0
+                except Exception:
+                    pass
+                cap0.release()
+        except Exception:
+            pass
+
         # Prefer MJPG first, fallback to YUYV; start with stabler FPS values
         fourccs = [cv2.VideoWriter_fourcc(*'MJPG'), cv2.VideoWriter_fourcc(*'YUYV')]
         resolutions = [(640, 480), (1280, 720), (1920, 1080)]
@@ -388,18 +432,26 @@ class CaptureSystem:
                         time.sleep(0.01)
                     continue
 
-                # Detect a frozen feed (unchanged pixel sum while considered stalled)
-                s = int(frame.sum())
-                if last_frame_sum is not None and s == last_frame_sum and (now - self.last_ok_ts) > stall_limit:
-                    log_warn("Frozen feed detected; reopening camera…")
-                    try: self.cap.release()
-                    except Exception: pass
-                    time.sleep(backoff)
-                    self.cap = self._open_camera(self.camera_index)
-                    self.last_open_ts = time.time()
-                    self.last_ok_ts = self.last_open_ts
-                    continue
-                last_frame_sum = s
+                # Detect a frozen feed cheaply (only when stalled): compare downsampled sum
+                if (now - self.last_ok_ts) > stall_limit:
+                    try:
+                        small = cv2.resize(frame, (64, 36))
+                        s = int(small.sum())
+                        if last_frame_sum is not None and s == last_frame_sum:
+                            log_warn("Frozen feed detected; reopening camera…")
+                            try: self.cap.release()
+                            except Exception: pass
+                            time.sleep(backoff)
+                            self.cap = self._open_camera(self.camera_index)
+                            self.last_open_ts = time.time()
+                            self.last_ok_ts = self.last_open_ts
+                            continue
+                        last_frame_sum = s
+                    except Exception:
+                        # If resize fails, skip frozen detection this cycle
+                        pass
+                else:
+                    last_frame_sum = None
 
                 with self.frame_lock:
                     self.latest_frame = frame
@@ -430,10 +482,30 @@ class CaptureSystem:
             frame = self.get_latest_frame()
             if frame is not None and not self._is_frame_bad(frame):
                 try:
-                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    if ok:
+                    # Optional downscale for preview only
+                    img = frame
+                    try:
+                        if self.preview_max_width and frame.shape[1] > int(self.preview_max_width):
+                            new_w = int(self.preview_max_width)
+                            new_h = int(frame.shape[0] * (new_w / frame.shape[1]))
+                            img = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                    except Exception:
+                        img = frame
+
+                    t0 = time.time()
+                    if self.turbojpeg:
+                        img_bytes = self.turbojpeg.encode(img, quality=int(self.jpeg_quality_preview), pixel_format=TJPF_BGR)
                         with self.preview_lock:
-                            self.preview_jpeg = buf.tobytes()
+                            self.preview_jpeg = img_bytes
+                    else:
+                        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(self.jpeg_quality_preview)])
+                        if ok:
+                            with self.preview_lock:
+                                self.preview_jpeg = buf.tobytes()
+                    # Update metrics
+                    enc_ms = (time.time() - t0) * 1000.0
+                    self.preview_encode_ms_last = enc_ms
+                    self.preview_encode_ms_avg = (0.2 * enc_ms) + (0.8 * self.preview_encode_ms_avg)
                 except Exception as e:
                     self.last_error = f"preview encode error: {e}"
                     log_err(self.last_error)
@@ -448,7 +520,19 @@ class CaptureSystem:
                     continue
                 outdir, fname, frame = self.save_q.popleft()
                 fpath = Path(outdir) / fname
-                cv2.imwrite(str(fpath), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                t0 = time.time()
+                if self.turbojpeg:
+                    # Fast-path JPEG encode and write
+                    img_bytes = self.turbojpeg.encode(frame, quality=int(self.jpeg_quality_capture), pixel_format=TJPF_BGR)
+                    with open(str(fpath), "wb") as f:
+                        f.write(img_bytes)
+                else:
+                    # Fallback to OpenCV
+                    cv2.imwrite(str(fpath), frame, [cv2.IMWRITE_JPEG_QUALITY, int(self.jpeg_quality_capture)])
+                # Update metrics
+                w_ms = (time.time() - t0) * 1000.0
+                self.saver_write_ms_last = w_ms
+                self.saver_write_ms_avg = (0.2 * w_ms) + (0.8 * self.saver_write_ms_avg)
             except Exception as e:
                 self.last_error = f"saver error: {e}"
                 log_err(self.last_error)
@@ -660,6 +744,7 @@ class CaptureSystem:
             self.session_rate = rate
             self.session_duration_s = (duration_minutes * 60) if duration_minutes else None
             self.session_start_time = time.time()
+            self.session_start_mono = time.monotonic()
             self.session_captures = 0
             self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -710,23 +795,45 @@ class CaptureSystem:
 
     def _session_worker(self):
         interval = 60.0 / float(self.session_rate)
-        next_t = time.time()
+        start = self.session_start_mono or time.monotonic()
+        next_t = start
+        end_t = (start + self.session_duration_s) if self.session_duration_s else None
+
         while not self.session_stop.is_set():
-            if self.session_duration_s and (time.time() - self.session_start_time >= self.session_duration_s):
+            now = time.monotonic()
+            if end_t and now >= end_t:
                 break
-            ok, path = self.capture_image()
-            if ok:
-                with self.session_lock:
-                    self.session_captures += 1
-                logger.debug(f"Captured: {path}")
-            next_t += interval
-            time.sleep(max(0.001, next_t - time.time()))
+
+            # Catch up if we fell behind (e.g., temporary blocking);
+            # ensure we don't exceed the planned end time.
+            caught = 0
+            while next_t <= now and (end_t is None or next_t < end_t):
+                ok, path = self.capture_image()
+                if ok:
+                    with self.session_lock:
+                        self.session_captures += 1
+                    logger.debug(f"Captured: {path}")
+                next_t += interval
+                caught += 1
+                # Avoid extreme bursts in pathological lag; still maintain correctness.
+                if caught >= 10:
+                    break
+
+            # Sleep until the next scheduled capture time.
+            sleep_for = max(0.001, next_t - time.monotonic())
+            time.sleep(sleep_for)
+
         with self.session_lock:
             self.session_active = False
 
     def session_status(self):
         with self.session_lock:
-            elapsed = int(time.time() - (self.session_start_time or time.time())) if self.session_active else 0
+            if self.session_active:
+                now_m = time.monotonic()
+                start_m = self.session_start_mono or now_m
+                elapsed = int(now_m - start_m)
+            else:
+                elapsed = 0
             remaining = None
             expected_total = None
             percent = None
@@ -795,16 +902,25 @@ select,input{width:100%;padding:8px;border-radius:8px;border:1px solid #334155;b
       <div style="margin-top:8px;font-size:12px;color:#9ca3af">Last error: <span id="lastErr">-</span></div>
 
       <h3 style="margin-top:16px">Diagnostics</h3>
-      <div class="dgrid" id="diag">
-        <div>Connected:</div><div id="d_connected">false</div>
-        <div>Index:</div><div id="d_index">-</div>
-        <div>Width × Height:</div><div id="d_wh">-</div>
-        <div>FPS:</div><div id="d_fps">-</div>
-        <div>Last frame age:</div><div id="d_age">-</div>
-        <div>Save queue:</div><div id="d_q">-</div>
-        <div>Preview FPS:</div><div id="d_pfps">10</div>
-      </div>
-      <button class="btn alt" onclick="refreshDiag()">🔧 Refresh Diagnostics</button>
+       <div class="dgrid" id="diag">
+         <div>Connected:</div><div id="d_connected">false</div>
+         <div>Index:</div><div id="d_index">-</div>
+         <div>Width × Height:</div><div id="d_wh">-</div>
+         <div>FPS:</div><div id="d_fps">-</div>
+         <div>Last frame age:</div><div id="d_age">-</div>
+         <div>Save queue:</div><div id="d_q">-</div>
+         <div>Preview FPS:</div><div id="d_pfps">10</div>
+         <div>Preview enc avg (ms):</div><div id="d_pavg">-</div>
+         <div>Write avg (ms):</div><div id="d_wavg">-</div>
+       </div>
+       <div class="row" style="gap:8px;margin-top:8px">
+         <input id="inp_pf" type="number" min="5" max="30" placeholder="Preview FPS">
+         <input id="inp_qp" type="number" min="40" max="95" placeholder="Preview Q">
+         <input id="inp_qc" type="number" min="80" max="100" placeholder="Capture Q">
+         <input id="inp_pw" type="number" min="320" max="1920" placeholder="Preview max width">
+       </div>
+       <button class="btn alt" onclick="applyPerf()">⚙️ Apply Perf Settings</button>
+       <button class="btn alt" onclick="refreshDiag()">🔧 Refresh Diagnostics</button>
 
       <button class="btn warn" onclick="capture()">📸 Capture Image</button>
     </div>
@@ -835,23 +951,27 @@ select,input{width:100%;padding:8px;border-radius:8px;border:1px solid #334155;b
   </div>
 </div>
 <script>
-async function jget(u){const r=await fetch(u);return r.json()}
-async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+async function jget(u){try{const r=await fetch(u,{cache:'no-store'});return r.json()}catch(e){const m=(e&&e.message)||'';if(m.includes('ERR_ABORTED')||(e&&e.name==='AbortError'))return {};console.error('GET failed',u,e);return {}}}
+async function jpost(u,b){try{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{}),cache:'no-store'});return r.json()}catch(e){const m=(e&&e.message)||'';if(m.includes('ERR_ABORTED')||(e&&e.name==='AbortError'))return {success:false,message:'Request aborted'};console.error('POST failed',u,e);return {success:false,message:'Network error'}}}
 
 let currentPath = "";
+let statusBusy = false;
+let sessionBusy = false;
 
 async function init(){
   await loadStorage();
   await statusTick();
   setInterval(statusTick, 1500);
-  setInterval(sessionTick, 500);
+  setInterval(sessionTick, 1000);
   setInterval(refreshDiag, 2000);
 }
 async function statusTick(){
+  if(statusBusy) return; statusBusy = true;
   const s = await jget('/api/status');
   document.getElementById('camBadge').textContent = s.camera_connected ? 'Camera: connected' : 'Camera: disconnected';
   document.getElementById('lastErr').textContent = s.last_error || '-';
   if(!currentPath && s.current_folder){ currentPath=s.current_folder; await loadFolder(currentPath); }
+  statusBusy = false;
 }
 async function scan(){
   const r = await jget('/api/camera/scan'); const sel=document.getElementById('camSelect'); sel.innerHTML="";
@@ -922,6 +1042,8 @@ async function start(){
   const r = await jpost('/api/session/start', payload);
   if(r.success){
     document.getElementById('startBtn').disabled=true; document.getElementById('stopBtn').disabled=false;
+    const rateTxt = rate+"/min"; const durTxt = durv? (" for "+parseInt(durv)+" min") : "";
+    alert('Session started at '+rateTxt+durTxt);
     if(r.product_dir){ currentPath=r.product_dir; document.getElementById('currentPath').value=currentPath; await loadFolder(currentPath); alert('Saving to:\\n'+r.product_dir); }
   }else{
     alert('Failed to start: ' + (r.message||'')); return;
@@ -934,6 +1056,7 @@ async function stop(){
   sessionTick(); await loadFolder(currentPath);
 }
 async function sessionTick(){
+  if(sessionBusy) return; sessionBusy = true;
   const s = await jget('/api/session/status');
   document.getElementById('sessState').textContent = s.active? 'Active' : 'Inactive';
   document.getElementById('imgCount').textContent = s.captures||0;
@@ -963,18 +1086,35 @@ async function sessionTick(){
     progWrap.style.display='none';
     progBar.style.width='0%';
   }
+  sessionBusy = false;
 }
-async function refreshDiag(){
-  const d = await jget('/api/camera/health');
-  document.getElementById('d_connected').textContent = d.connected;
-  document.getElementById('d_index').textContent = d.index ?? '-';
-  document.getElementById('d_wh').textContent = (d.width||'-')+' × '+(d.height||'-');
-  document.getElementById('d_fps').textContent = d.fps ?? '-';
-  document.getElementById('d_age').textContent = (d.last_ok_age_s!=null)? (d.last_ok_age_s+'s'):'-';
-  document.getElementById('d_q').textContent = d.save_queue_len ?? '-';
-  document.getElementById('d_pfps').textContent = d.preview_fps ?? '-';
-  if(d.last_error){ document.getElementById('lastErr').textContent = d.last_error; }
-}
+  async function refreshDiag(){
+    const d = await jget('/api/camera/health');
+    document.getElementById('d_connected').textContent = d.connected;
+    document.getElementById('d_index').textContent = d.index ?? '-';
+    document.getElementById('d_wh').textContent = (d.width||'-')+' × '+(d.height||'-');
+    document.getElementById('d_fps').textContent = d.fps ?? '-';
+    document.getElementById('d_age').textContent = (d.last_ok_age_s!=null)? (d.last_ok_age_s+'s'):'-';
+    document.getElementById('d_q').textContent = d.save_queue_len ?? '-';
+    document.getElementById('d_pfps').textContent = d.preview_fps ?? '-';
+    const pa = document.getElementById('d_pavg'); if(pa) pa.textContent = (d.preview_avg_ms!=null)? d.preview_avg_ms : '-';
+    const wa = document.getElementById('d_wavg'); if(wa) wa.textContent = (d.write_avg_ms!=null)? d.write_avg_ms : '-';
+    if(d.last_error){ document.getElementById('lastErr').textContent = d.last_error; }
+    // Prefill perf inputs
+    const pf = document.getElementById('inp_pf'); if(pf && d.preview_fps!=null) pf.value = d.preview_fps;
+    const qp = document.getElementById('inp_qp'); if(qp && d.jpeg_quality_preview!=null) qp.value = d.jpeg_quality_preview;
+    const qc = document.getElementById('inp_qc'); if(qc && d.jpeg_quality_capture!=null) qc.value = d.jpeg_quality_capture;
+    const pw = document.getElementById('inp_pw'); if(pw && d.preview_max_width!=null) pw.value = d.preview_max_width;
+  }
+  async function applyPerf(){
+    const pf = parseInt(document.getElementById('inp_pf').value||system.preview_fps||12);
+    const qp = parseInt(document.getElementById('inp_qp').value||65);
+    const qc = parseInt(document.getElementById('inp_qc').value||90);
+    const pw = parseInt(document.getElementById('inp_pw').value||960);
+    const r = await jpost('/api/perf/set', {preview_fps: pf, jpeg_quality_preview: qp, jpeg_quality_capture: qc, preview_max_width: pw});
+    alert(r.success? 'Perf updated' : ('Failed: '+(r.error||r.message||'')));
+    await refreshDiag();
+  }
 init();
 </script>
 </body></html>
@@ -1068,11 +1208,44 @@ def api_camera_health():
             "last_ok_age_s": age,
             "save_queue_len": len(system.save_q),
             "preview_fps": system.preview_fps,
-            "last_error": system.last_error
+            "last_error": system.last_error,
+            "jpeg_quality_preview": system.jpeg_quality_preview,
+            "jpeg_quality_capture": system.jpeg_quality_capture,
+            "preview_max_width": system.preview_max_width,
+            "turbojpeg": bool(system.turbojpeg),
+            "preview_avg_ms": round(system.preview_encode_ms_avg, 2),
+            "preview_last_ms": round(system.preview_encode_ms_last, 2),
+            "write_avg_ms": round(system.saver_write_ms_avg, 2),
+            "write_last_ms": round(system.saver_write_ms_last, 2),
         }
     except Exception as e:
         caps = {"connected": False, "error": str(e)}
     return jsonify(caps)
+
+# ---- Perf config ----
+@app.route('/api/perf/set', methods=['POST'])
+def api_perf_set():
+    try:
+        data = request.get_json(silent=True) or {}
+        qprev = int(data.get('jpeg_quality_preview', system.jpeg_quality_preview))
+        qcap = int(data.get('jpeg_quality_capture', system.jpeg_quality_capture))
+        fps = int(data.get('preview_fps', system.preview_fps))
+        maxw = int(data.get('preview_max_width', system.preview_max_width))
+        system.jpeg_quality_preview = max(40, min(95, qprev))
+        system.jpeg_quality_capture = max(80, min(100, qcap))
+        system.preview_fps = max(5, min(30, fps))
+        system.preview_max_width = max(320, min(1920, maxw))
+        return jsonify({
+            "success": True,
+            "config": {
+                "jpeg_quality_preview": system.jpeg_quality_preview,
+                "jpeg_quality_capture": system.jpeg_quality_capture,
+                "preview_fps": system.preview_fps,
+                "preview_max_width": system.preview_max_width,
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 # ---- Capture ----
 @app.route("/api/capture", methods=["POST"])
@@ -1144,11 +1317,16 @@ def api_status():
         "camera_connected": cam_ok,
         "current_folder": system.current_folder,
         "capture_count": system.total_captures,
-        "session_time": int(time.time() - system.session_start_time) if system.session_start_time else 0,
+        "session_time": (int(time.monotonic() - system.session_start_mono) if system.session_start_mono else 0),
         "last_error": system.last_error
     })
 
 if __name__ == "__main__":
     log_info("Starting 360° Product Capture System…")
+    # Support overriding port via CLI arg or PORT env
+    import os, argparse
+    parser = argparse.ArgumentParser(description="Run Lightweight Capture App")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 5001)), help="Port to bind (default 5001)")
+    args, _ = parser.parse_known_args()
     # For long runs, avoid Flask debug reloader spawning extra processes
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
