@@ -29,7 +29,7 @@ export class CameraManager {
   private lastFrameTs = 0;
   private reconnectCount = 0;
   private lastErrorMsg: string | null = null;
-  previewFps = 10;
+  previewFps = 30; // Increased from 10 to 30 for smoother preview
 
   listDevices = async (): Promise<CameraInfo[]> => {
     const be = this.backend;
@@ -120,10 +120,10 @@ export class CameraManager {
     await this.stop();
     this.deviceIndex = index;
     this.lastErrorMsg = null;
-    const fps = options?.fps ?? 10;
+    const fps = options?.fps ?? 30; // Increased default from 10 to 30 FPS
     this.previewFps = fps;
-    // Support higher resolution for training images (1920x1080 or custom)
-    const size = `${options?.width ?? 1920}x${options?.height ?? 1080}`;
+    // Use 1280x720 for better performance (was 1920x1080)
+    const size = `${options?.width ?? 1280}x${options?.height ?? 720}`;
     const be = this.backend;
     let srcArg = '';
     if (be === 'avfoundation') {

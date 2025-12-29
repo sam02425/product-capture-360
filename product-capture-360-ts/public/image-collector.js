@@ -112,9 +112,9 @@ async function connectCamera() {
   const idx = document.getElementById('cameraSelect').value;
   const res = await jpost('/api/camera/init', {
     camera_index: parseInt(idx),
-    width: 1920,
-    height: 1080,
-    fps: 10,
+    width: 1280,  // Reduced from 1920 for better performance
+    height: 720,  // Reduced from 1080 for better performance
+    fps: 30,      // Increased from 10 for smoother preview
   });
 
   if (res.success) {
