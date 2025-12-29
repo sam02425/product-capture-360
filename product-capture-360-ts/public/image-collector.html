@@ -776,6 +776,331 @@
       color: var(--text-dim);
     }
 
+    /* Welcome Modal */
+    .welcome-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .welcome-modal {
+      background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%);
+      border: 2px solid var(--primary);
+      border-radius: 1rem;
+      max-width: 900px;
+      max-height: 90vh;
+      width: 90%;
+      overflow-y: auto;
+      box-shadow: 0 25px 50px -12px rgba(99, 102, 241, 0.25);
+      animation: slideUp 0.4s ease-out;
+    }
+
+    .welcome-header {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+      padding: 2rem;
+      text-align: center;
+      border-radius: 1rem 1rem 0 0;
+    }
+
+    .welcome-header h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: white;
+      margin-bottom: 0.5rem;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .welcome-header p {
+      font-size: 1.125rem;
+      color: rgba(255, 255, 255, 0.9);
+      margin-top: 0.5rem;
+    }
+
+    .welcome-content {
+      padding: 2rem;
+    }
+
+    .welcome-section {
+      margin-bottom: 2rem;
+    }
+
+    .welcome-section h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .feature-card {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      transition: all 0.3s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+    }
+
+    .feature-card h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .feature-card p {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .quick-start-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .step-card {
+      background: var(--bg-dark);
+      border-left: 4px solid var(--primary);
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      display: flex;
+      gap: 1rem;
+    }
+
+    .step-number {
+      background: var(--primary);
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+      flex-shrink: 0;
+    }
+
+    .step-content h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.25rem;
+    }
+
+    .step-content p {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .welcome-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .welcome-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding: 1rem;
+      background: var(--bg-dark);
+      border-radius: 0.5rem;
+      cursor: pointer;
+    }
+
+    .welcome-checkbox:hover {
+      background: var(--bg-hover);
+    }
+
+    .welcome-checkbox input[type="checkbox"] {
+      width: auto;
+      cursor: pointer;
+    }
+
+    .welcome-checkbox label {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+
+    /* Keyboard Shortcuts Overlay */
+    .shortcuts-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(10px);
+      z-index: 1001;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    .shortcuts-modal {
+      background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%);
+      border: 2px solid var(--primary);
+      border-radius: 1rem;
+      max-width: 800px;
+      max-height: 90vh;
+      width: 90%;
+      overflow-y: auto;
+      box-shadow: 0 25px 50px -12px rgba(99, 102, 241, 0.25);
+      animation: slideUp 0.4s ease-out;
+    }
+
+    .shortcuts-header {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      border-radius: 1rem 1rem 0 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .shortcuts-header h2 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: white;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      flex: 1;
+      text-align: center;
+    }
+
+    .shortcuts-close {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem;
+      opacity: 0.8;
+      transition: opacity 0.2s;
+    }
+
+    .shortcuts-close:hover {
+      opacity: 1;
+    }
+
+    .shortcuts-content {
+      padding: 2rem;
+    }
+
+    .shortcuts-section {
+      margin-bottom: 2rem;
+    }
+
+    .shortcuts-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .shortcuts-section h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .shortcuts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .shortcut-item {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .shortcut-item:hover {
+      border-color: var(--primary);
+      background: var(--bg-hover);
+    }
+
+    .shortcut-description {
+      font-size: 0.875rem;
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .shortcut-keys {
+      display: flex;
+      gap: 0.25rem;
+    }
+
+    .shortcut-key {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-bottom: 2px solid var(--primary);
+      border-radius: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text);
+      font-family: monospace;
+      min-width: 28px;
+      text-align: center;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
       .container {
@@ -796,10 +1121,303 @@
       .annotation-properties {
         max-height: 400px;
       }
+      .welcome-modal {
+        width: 95%;
+        max-height: 95vh;
+      }
+      .welcome-header h1 {
+        font-size: 2rem;
+      }
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+      .welcome-actions {
+        flex-direction: column;
+      }
     }
   </style>
 </head>
 <body>
+  <!-- Welcome Modal -->
+  <div id="welcomeOverlay" class="welcome-overlay" style="display: none;">
+    <div class="welcome-modal">
+      <div class="welcome-header">
+        <h1>Welcome to Image Collector</h1>
+        <p>Professional AI-Powered Data Collection & Annotation Platform</p>
+      </div>
+      <div class="welcome-content">
+        <div class="welcome-section">
+          <h2>🚀 Key Features</h2>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <h3>📸 Smart Capture</h3>
+              <p>Connect cameras, automate image capture at up to 180 frames/min with real-time preview and storage management.</p>
+            </div>
+            <div class="feature-card">
+              <h3>🎨 Advanced Augmentation</h3>
+              <p>Apply 15+ augmentation techniques including retail-specific transformations for real-world scenarios.</p>
+            </div>
+            <div class="feature-card">
+              <h3>🏷️ AI Annotation</h3>
+              <p>4 annotation types with YOLOv8/v11 auto-detection, SAM2 segmentation, and 5 export formats (YOLO, COCO, VOC).</p>
+            </div>
+            <div class="feature-card">
+              <h3>⚙️ Dataset Generation</h3>
+              <p>Generate training datasets with automatic train/val splits, versioning, and multiple export formats.</p>
+            </div>
+            <div class="feature-card">
+              <h3>📦 Version Control</h3>
+              <p>Track dataset versions, compare changes, export metadata, and maintain complete history.</p>
+            </div>
+            <div class="feature-card">
+              <h3>📚 Complete Documentation</h3>
+              <p>Interactive guides, API documentation, and professional landing pages with code examples.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="welcome-section">
+          <h2>⚡ Quick Start Guide</h2>
+          <div class="quick-start-steps">
+            <div class="step-card">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h3>Capture Images</h3>
+                <p>Go to <strong>Capture</strong> tab → Connect camera → Select storage → Start automated session or capture manually.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h3>Apply Augmentations</h3>
+                <p>Visit <strong>Augmentation</strong> tab → Upload backgrounds → Enable augmentations → Preview results → Fine-tune settings.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h3>Annotate with AI</h3>
+                <p>Open <strong>Annotation</strong> tab → Upload images → Select YOLO model → Auto-annotate → Refine manually with 4 tools.</p>
+              </div>
+            </div>
+            <div class="step-card">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h3>Generate & Export</h3>
+                <p>Navigate to <strong>Generate</strong> tab → Choose formats (YOLO, COCO) → Set train/val split → Generate dataset.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="welcome-section">
+          <h2>🤖 AI Backend Setup</h2>
+          <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.5rem;">
+            <p style="color: var(--text); line-height: 1.8; margin-bottom: 1rem;">
+              For AI-powered annotation features, start the Python backend:
+            </p>
+            <div style="background: var(--bg-card); padding: 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.875rem; color: var(--text); margin-bottom: 1rem;">
+              <div style="color: var(--text-dim);"># Install dependencies (first time)</div>
+              <div style="margin-top: 0.25rem;">pip install -r requirements.txt</div>
+              <div style="margin-top: 0.75rem; color: var(--text-dim);"># Start AI backend</div>
+              <div style="margin-top: 0.25rem;">python ai_backend.py</div>
+            </div>
+            <p style="font-size: 0.875rem; color: var(--text-dim);">
+              Backend runs at <code style="color: var(--primary); background: var(--bg-card); padding: 0.25rem 0.5rem; border-radius: 0.25rem;">http://localhost:8000</code>
+              • Swagger UI: <code style="color: var(--primary); background: var(--bg-card); padding: 0.25rem 0.5rem; border-radius: 0.25rem;">/docs</code>
+            </p>
+          </div>
+        </div>
+
+        <div class="welcome-checkbox" onclick="toggleDontShowAgain(this)">
+          <input type="checkbox" id="dontShowAgain">
+          <label for="dontShowAgain">Don't show this again</label>
+        </div>
+
+        <div class="welcome-actions">
+          <button class="btn btn-primary btn-full" onclick="closeWelcome()">
+            Get Started
+          </button>
+          <button class="btn btn-secondary btn-full" onclick="openDocs()">
+            View Documentation
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Overlay -->
+  <div id="shortcutsOverlay" class="shortcuts-overlay" style="display: none;">
+    <div class="shortcuts-modal">
+      <div class="shortcuts-header">
+        <div style="width: 32px;"></div>
+        <h2>⌨️ Keyboard Shortcuts</h2>
+        <button class="shortcuts-close" onclick="closeShortcuts()">✕</button>
+      </div>
+      <div class="shortcuts-content">
+        <!-- Annotation Tools -->
+        <div class="shortcuts-section">
+          <h3>🛠️ Annotation Tools</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span class="shortcut-description">Bounding Box Tool</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">B</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Oriented Bounding Box</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">O</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Polygon Tool</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">P</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Segmentation Tool</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">S</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Select Tool</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">V</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Pan Tool</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">H</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="shortcuts-section">
+          <h3>⚡ Actions</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span class="shortcut-description">Finish Polygon/Segmentation</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Enter</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Cancel Current Shape</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Esc</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Delete Selected</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Delete</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Toggle Annotations</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">T</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Show Shortcuts</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">?</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Zoom & Navigation -->
+        <div class="shortcuts-section">
+          <h3>🔍 Zoom & Navigation</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span class="shortcut-description">Reset Zoom (100%)</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">0</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Zoom In</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">+</span>
+                <span class="shortcut-key">=</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Zoom Out</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">-</span>
+                <span class="shortcut-key">_</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Zoom with Mouse Wheel</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Scroll</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Undo/Redo -->
+        <div class="shortcuts-section">
+          <h3>↶ Undo/Redo</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span class="shortcut-description">Undo Last Action</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Ctrl</span>
+                <span class="shortcut-key">Z</span>
+              </div>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-description">Redo Last Action</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Ctrl</span>
+                <span class="shortcut-key">Y</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- OBB Specific -->
+        <div class="shortcuts-section">
+          <h3>📐 Oriented Bounding Box</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span class="shortcut-description">Rotate While Dragging</span>
+              <div class="shortcut-keys">
+                <span class="shortcut-key">Shift</span>
+                <span class="shortcut-key">Drag</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tips -->
+        <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.5rem; margin-top: 1rem;">
+          <h4 style="color: var(--success); margin-bottom: 0.5rem; font-size: 1rem;">💡 Pro Tips</h4>
+          <ul style="color: var(--text-dim); line-height: 1.8; margin-left: 1.5rem; font-size: 0.875rem;">
+            <li>Use keyboard shortcuts for faster annotation workflow</li>
+            <li>Press <code style="color: var(--primary); background: var(--bg-card); padding: 0.125rem 0.375rem; border-radius: 0.25rem;">?</code> anytime to view this shortcuts guide</li>
+            <li>Combine Pan tool with mouse wheel for precise navigation</li>
+            <li>Use Undo/Redo to experiment without fear</li>
+            <li>Polygon tool: Click near first point to close, or press Enter</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="header">
     <div class="logo">
       <div style="display: flex; align-items: center; gap: 1rem;">
@@ -811,6 +1429,7 @@
       </div>
     </div>
     <div class="nav">
+      <button class="nav-btn" onclick="showWelcome()">❓ Help</button>
       <button class="nav-btn active" id="statusBadge">🟢 Connected</button>
     </div>
   </div>

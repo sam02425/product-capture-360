@@ -2316,6 +2316,72 @@ window.runAutoTrack = async function() {
 
 // ==================== END ANNOTATION SYSTEM ====================
 
+// ==================== WELCOME MODAL FUNCTIONS ====================
+
+window.closeWelcome = function() {
+  const overlay = document.getElementById('welcomeOverlay');
+  const checkbox = document.getElementById('dontShowAgain');
+
+  if (checkbox.checked) {
+    localStorage.setItem('hideWelcomeScreen', 'true');
+  }
+
+  overlay.style.display = 'none';
+};
+
+window.toggleDontShowAgain = function(element) {
+  const checkbox = element.querySelector('input[type="checkbox"]');
+  checkbox.checked = !checkbox.checked;
+};
+
+window.openDocs = function() {
+  window.open('/annotation-docs.html', '_blank');
+  closeWelcome();
+};
+
+function showWelcomeIfNeeded() {
+  const hideWelcome = localStorage.getItem('hideWelcomeScreen');
+
+  if (!hideWelcome) {
+    document.getElementById('welcomeOverlay').style.display = 'flex';
+  }
+}
+
+window.showWelcome = function() {
+  document.getElementById('welcomeOverlay').style.display = 'flex';
+};
+
+// ==================== END WELCOME MODAL ====================
+
+// ==================== KEYBOARD SHORTCUTS MODAL ====================
+
+window.showShortcuts = function() {
+  document.getElementById('shortcutsOverlay').style.display = 'flex';
+};
+
+window.closeShortcuts = function() {
+  document.getElementById('shortcutsOverlay').style.display = 'none';
+};
+
+// Global keyboard handler for "?" key
+document.addEventListener('keydown', (e) => {
+  // Show shortcuts with "?" or "/" key
+  if ((e.key === '?' || e.key === '/') && !e.target.matches('input, textarea')) {
+    e.preventDefault();
+    showShortcuts();
+  }
+
+  // Close shortcuts modal with Escape
+  if (e.key === 'Escape') {
+    const shortcutsOverlay = document.getElementById('shortcutsOverlay');
+    if (shortcutsOverlay && shortcutsOverlay.style.display === 'flex') {
+      closeShortcuts();
+    }
+  }
+});
+
+// ==================== END KEYBOARD SHORTCUTS ====================
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadCameras();
@@ -2329,4 +2395,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Update estimates when inputs change
   document.getElementById('augPerBg')?.addEventListener('input', updateEstimates);
+
+  // Show welcome screen on first visit
+  setTimeout(showWelcomeIfNeeded, 500);
 });
