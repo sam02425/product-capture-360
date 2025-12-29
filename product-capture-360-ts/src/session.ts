@@ -39,6 +39,10 @@ export class SessionManager {
     totalFailed: 0,
     failureReasons: new Map(),
   };
+  // Frame buffer to handle high capture rates when camera FPS < capture rate
+  private frameBuffer: Buffer[] = [];
+  private readonly MAX_FRAME_BUFFER = 10; // Keep last 10 unique frames
+  private lastCapturedFrameHash?: string;
 
   constructor(private storage: StorageManager, private camera: CameraManager, logger?: FastifyBaseLogger) {
     this.logger = logger;
@@ -132,7 +136,68 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Production-grade pre-flight validation before starting session
+   * Validates all prerequisites to prevent mid-session failures
+   */
+  private validatePreFlight = (productName?: string): [boolean, string] => {
+    // 1. Storage path must be set
+    if (!this.storage.currentPath) {
+      return [false, '❌ PRE-FLIGHT FAILED: No storage location set\n   💡 Set storage location before starting capture'];
+    }
+
+    // 2. Storage path must be writable
+    const fs = require('fs');
+    const path = require('path');
+    try {
+      const testFile = path.join(this.storage.currentPath, '.preflight_test');
+      fs.writeFileSync(testFile, 'test');
+      fs.unlinkSync(testFile);
+    } catch (e: any) {
+      return [false, `❌ PRE-FLIGHT FAILED: Storage path not writable\n   🔒 Path: ${this.storage.currentPath}\n   💡 Check permissions`];
+    }
+
+    // 3. Camera must be initialized
+    const cameraMetrics = this.camera.getMetrics();
+    if (!cameraMetrics.connected) {
+      return [false, '❌ PRE-FLIGHT FAILED: Camera not initialized\n   📸 Initialize camera before starting capture'];
+    }
+
+    // 4. Camera must have recent frames
+    if (cameraMetrics.lastFrameAgeMs > 5000 || cameraMetrics.lastFrameAgeMs === -1) {
+      return [false, '❌ PRE-FLIGHT FAILED: Camera not receiving frames\n   📸 Last frame age: ' + (cameraMetrics.lastFrameAgeMs === -1 ? 'never' : cameraMetrics.lastFrameAgeMs + 'ms') + '\n   💡 Check camera connection'];
+    }
+
+    // 5. Check disk space
+    const diskSpace = this.storage.checkDiskSpace(this.storage.currentPath);
+    if (!diskSpace.available) {
+      return [false, `❌ PRE-FLIGHT FAILED: Insufficient disk space\n   💾 Available: ${diskSpace.free_gb.toFixed(2)} GB\n   💡 Free up space or choose different location`];
+    }
+
+    // 6. Validate product name
+    if (!productName || productName.trim() === '') {
+      return [false, '❌ PRE-FLIGHT FAILED: Product name required\n   🏷️  Provide a product name for this capture session'];
+    }
+
+    return [true, '✅ Pre-flight checks passed'];
+  };
+
   start = (ratePerMin: number, durationSec?: number, productName?: string): boolean => {
+    // Production-grade pre-flight validation
+    const [valid, message] = this.validatePreFlight(productName);
+    if (!valid) {
+      if (this.logger) {
+        this.logger.error({
+          event: 'session_preflight_failed',
+          product: productName || 'unknown',
+          error: message,
+        }, 'Pre-flight validation failed');
+      } else {
+        console.error(message);
+      }
+      return false;
+    }
+
     this.stop();
     this.captured = 0;
     this.ratePerMin = ratePerMin;
@@ -161,20 +226,82 @@ export class SessionManager {
     }
 
     let framesQueued = 0;
+    let missedFrames = 0;
+    let duplicateFrames = 0;
+
     this.timer = setInterval(() => {
       const buf = this.camera.getLatestJPEG();
+
       if (buf) {
-        // Queue the save operation instead of blocking
-        this.saveQueue.push({ buffer: buf, productName: this.productName });
-        framesQueued++;
+        // Create a simple hash to detect duplicate frames
+        const frameHash = buf.slice(0, 100).toString('base64'); // Hash first 100 bytes for speed
+
+        // Check if this is a new unique frame
+        const isNewFrame = frameHash !== this.lastCapturedFrameHash;
+
+        if (isNewFrame) {
+          // NEW UNIQUE FRAME - Add to buffer and queue immediately
+          this.frameBuffer.push(buf);
+          if (this.frameBuffer.length > this.MAX_FRAME_BUFFER) {
+            this.frameBuffer.shift(); // Remove oldest frame
+          }
+          this.lastCapturedFrameHash = frameHash;
+
+          this.saveQueue.push({ buffer: buf, productName: this.productName });
+          framesQueued++;
+        } else {
+          // DUPLICATE FRAME - Camera hasn't produced a new frame yet
+          // Use the oldest frame from buffer to maintain capture rate
+          if (this.frameBuffer.length > 1) {
+            // Use oldest buffered frame (will be slightly different angle)
+            const oldFrame = this.frameBuffer[0];
+            this.saveQueue.push({ buffer: oldFrame, productName: this.productName });
+            framesQueued++;
+            duplicateFrames++;
+          } else if (this.frameBuffer.length === 1) {
+            // Only one frame available, reuse it to maintain rate
+            this.saveQueue.push({ buffer: buf, productName: this.productName });
+            framesQueued++;
+            duplicateFrames++;
+          } else {
+            // No frames in buffer at all (shouldn't happen but handle it)
+            missedFrames++;
+          }
+        }
 
         // Only log every 50 frames to reduce overhead
         if (framesQueued % 50 === 0) {
           const queueSize = this.saveQueue.length;
-          console.log(`[Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${queueSize}]`);
+          const frameRate = framesQueued / ((Date.now() - this.startTs) / 1000);
+          const uniquePercent = ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1);
+          console.log(`[Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${queueSize}, Rate: ${frameRate.toFixed(1)}/s, Unique: ${uniquePercent}%, Dupes: ${duplicateFrames}]`);
         }
       } else {
-        console.log('No camera frame available');
+        // NO FRAME AT ALL from camera - use buffer if available
+        if (this.frameBuffer.length > 0) {
+          // Use oldest frame from buffer to maintain capture rate
+          const bufferedFrame = this.frameBuffer[0];
+          this.saveQueue.push({ buffer: bufferedFrame, productName: this.productName });
+          framesQueued++;
+          duplicateFrames++;
+        } else {
+          // No frames available anywhere - this is a real miss
+          missedFrames++;
+
+          if (missedFrames % 10 === 0) {
+            if (this.logger) {
+              this.logger.warn({
+                event: 'camera_frame_miss',
+                product: this.productName || 'unknown',
+                missed_count: missedFrames,
+                queued_count: framesQueued,
+                capture_rate: ratePerMin,
+              }, `⚠️  Camera not keeping up: ${missedFrames} missed frames at ${ratePerMin}/min rate`);
+            } else {
+              console.warn(`⚠️  No camera frames available (${missedFrames} real misses). Increase camera FPS or reduce capture rate.`);
+            }
+          }
+        }
       }
       if (this.durationSec) {
         const elapsed = (Date.now() - this.startTs) / 1000;
@@ -191,13 +318,17 @@ export class SessionManager {
               frames_queued: framesQueued,
               frames_saved: this.captured,
               frames_pending: remaining,
+              unique_frames: framesQueued - duplicateFrames,
+              duplicate_frames: duplicateFrames,
+              missed_frames: missedFrames,
+              unique_percentage: framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(2) + '%' : 'N/A',
               total_success: this.metrics.totalSuccess,
               total_failed: this.metrics.totalFailed,
               success_rate: this.metrics.totalAttempts > 0
                 ? ((this.metrics.totalSuccess / this.metrics.totalAttempts) * 100).toFixed(2) + '%'
                 : 'N/A',
               storage_path: this.storage.currentPath || 'NOT_SET',
-            }, `🏁 Session completed: ${this.captured} images saved, ${remaining} pending`);
+            }, `🏁 Session completed: ${this.captured} images saved, ${remaining} pending, ${framesQueued - duplicateFrames} unique frames (${((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1)}%)`);
           } else {
             console.log(`Session duration ${durationSec}s reached. Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${remaining}. Stopping capture, queue will continue processing.`);
           }
@@ -218,11 +349,15 @@ export class SessionManager {
           elapsed_seconds: elapsed.toFixed(2),
           images_captured: this.captured,
           queue_remaining: this.saveQueue.length,
+          buffer_frames: this.frameBuffer.length,
         }, `⏹️  Session stopped: ${this.captured} images captured`);
       }
       clearInterval(this.timer);
     }
     this.timer = undefined;
+    // Clear frame buffer when stopping
+    this.frameBuffer = [];
+    this.lastCapturedFrameHash = undefined;
     return true;
   };
 

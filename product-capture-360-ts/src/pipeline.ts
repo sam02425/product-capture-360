@@ -59,6 +59,128 @@ export interface PipelineResult {
 }
 
 /**
+ * Production-grade input validation for pipeline
+ */
+function validatePipelineInputs(opts: PipelineOptions): [boolean, string] {
+  const {
+    productFolder,
+    productName,
+    outputDir,
+    backgroundImages,
+    augmentationsPerBackground = 5,
+    trainValSplit = 0.8,
+  } = opts;
+
+  // 1. Product folder must exist
+  if (!fs.existsSync(productFolder)) {
+    return [false, `❌ VALIDATION FAILED: Product folder does not exist\n   📁 Path: ${productFolder}\n   💡 Check the path and try again`];
+  }
+
+  // 2. Product folder must be readable
+  try {
+    fs.accessSync(productFolder, fs.constants.R_OK);
+  } catch {
+    return [false, `❌ VALIDATION FAILED: Cannot read product folder\n   🔒 Path: ${productFolder}\n   💡 Check folder permissions`];
+  }
+
+  // 3. Must contain images
+  let images: string[] = [];
+  try {
+    images = fs.readdirSync(productFolder).filter(f => /\.(jpg|jpeg|png)$/i.test(f));
+  } catch (e: any) {
+    return [false, `❌ VALIDATION FAILED: Cannot read images from folder\n   📁 Path: ${productFolder}\n   Error: ${e?.message}`];
+  }
+
+  if (images.length === 0) {
+    return [false, `❌ VALIDATION FAILED: No images found in product folder\n   📁 Path: ${productFolder}\n   💡 Add .jpg, .jpeg, or .png images to the folder`];
+  }
+
+  if (images.length < 10) {
+    return [false, `❌ VALIDATION FAILED: Insufficient images for training\n   📸 Found: ${images.length} images\n   💡 Minimum 10 images recommended, 120+ for production datasets`];
+  }
+
+  // 4. Product name validation
+  if (!productName || productName.trim() === '') {
+    return [false, '❌ VALIDATION FAILED: Product name required\n   🏷️  Provide a valid product name'];
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(productName)) {
+    return [false, `❌ VALIDATION FAILED: Invalid product name\n   🏷️  Name: "${productName}"\n   💡 Use only letters, numbers, hyphens, and underscores`];
+  }
+
+  // 5. Output directory validation
+  const outputParent = path.dirname(outputDir);
+  if (!fs.existsSync(outputParent)) {
+    return [false, `❌ VALIDATION FAILED: Output parent directory does not exist\n   📂 Path: ${outputParent}\n   💡 Create the parent directory first`];
+  }
+
+  // 6. Check if output directory already exists
+  if (fs.existsSync(outputDir)) {
+    try {
+      const entries = fs.readdirSync(outputDir);
+      const hasContent = entries.length > 0;
+      if (hasContent) {
+        return [false, `❌ VALIDATION FAILED: Output directory already exists with content\n   📂 Path: ${outputDir}\n   📁 Contains: ${entries.length} items\n   💡 Delete the directory or choose a different output path`];
+      }
+    } catch (e: any) {
+      return [false, `❌ VALIDATION FAILED: Cannot read output directory\n   🔒 Path: ${outputDir}\n   Error: ${e?.message}`];
+    }
+  }
+
+  // 7. Validate background images
+  if (!backgroundImages || backgroundImages.length === 0) {
+    return [false, '❌ VALIDATION FAILED: No background images provided\n   🖼️  Background images are required for augmentation\n   💡 Provide at least 5 retail shelf/environment images'];
+  }
+
+  for (const bg of backgroundImages) {
+    if (!fs.existsSync(bg)) {
+      return [false, `❌ VALIDATION FAILED: Background image not found\n   🖼️  Path: ${bg}\n   💡 Check all background image paths`];
+    }
+  }
+
+  if (backgroundImages.length < 3) {
+    return [false, `❌ VALIDATION FAILED: Insufficient background images\n   🖼️  Found: ${backgroundImages.length}\n   💡 Minimum 3 backgrounds recommended, 10+ for diverse datasets`];
+  }
+
+  // 8. Validate augmentation parameters
+  if (augmentationsPerBackground < 1 || augmentationsPerBackground > 20) {
+    return [false, `❌ VALIDATION FAILED: Invalid augmentations per background\n   🔢 Value: ${augmentationsPerBackground}\n   💡 Must be between 1 and 20`];
+  }
+
+  // 9. Validate train/val split
+  if (trainValSplit < 0.5 || trainValSplit > 0.95) {
+    return [false, `❌ VALIDATION FAILED: Invalid train/val split ratio\n   🔢 Value: ${trainValSplit}\n   💡 Must be between 0.5 (50%) and 0.95 (95%)`];
+  }
+
+  // 10. Check disk space for output
+  try {
+    const { execSync } = require('child_process');
+    const outputDisk = fs.existsSync(outputDir) ? outputDir : outputParent;
+
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      const dfOutput = execSync(`df -k "${outputDisk}"`, { encoding: 'utf8' });
+      const lines = dfOutput.trim().split('\n');
+      if (lines.length > 1) {
+        const parts = lines[1].split(/\s+/);
+        const availableKB = parseInt(parts[3], 10);
+        const availableGB = availableKB / (1024 * 1024);
+
+        // Estimate: each image ~2MB original + ~5MB per augmentation
+        const estimatedGB = (images.length * 2 + images.length * backgroundImages.length * augmentationsPerBackground * 5) / 1024;
+
+        if (availableGB < estimatedGB + 1) {
+          return [false, `❌ VALIDATION FAILED: Insufficient disk space\n   💾 Available: ${availableGB.toFixed(2)} GB\n   💾 Estimated need: ${estimatedGB.toFixed(2)} GB\n   💡 Free up space or reduce augmentations`];
+        }
+      }
+    }
+  } catch {
+    // If we can't check disk space, continue
+  }
+
+  return [true, `✅ Validation passed: ${images.length} images, ${backgroundImages.length} backgrounds`];
+}
+
+/**
  * Run complete pipeline
  */
 export async function runCompletePipeline(opts: PipelineOptions): Promise<PipelineResult> {
@@ -76,6 +198,18 @@ export async function runCompletePipeline(opts: PipelineOptions): Promise<Pipeli
   };
 
   try {
+    // Production-grade input validation
+    const [valid, validationMessage] = validatePipelineInputs(opts);
+    if (!valid) {
+      console.error(validationMessage);
+      return {
+        ...result,
+        message: validationMessage,
+      };
+    }
+
+    console.log(validationMessage);
+
     const {
       productFolder,
       productName,
@@ -92,23 +226,8 @@ export async function runCompletePipeline(opts: PipelineOptions): Promise<Pipeli
       trainValSplit = 0.8,
     } = opts;
 
-    // Verify product folder exists
-    if (!fs.existsSync(productFolder)) {
-      return {
-        ...result,
-        message: `Product folder not found: ${productFolder}`,
-      };
-    }
-
     const images = fs.readdirSync(productFolder).filter(f => /\.(jpg|jpeg|png)$/i.test(f));
     result.stats.originalImages = images.length;
-
-    if (images.length === 0) {
-      return {
-        ...result,
-        message: 'No images found in product folder',
-      };
-    }
 
     console.log(`\n🚀 Starting pipeline for ${productName}`);
     console.log(`📁 Input: ${productFolder} (${images.length} images)`);
