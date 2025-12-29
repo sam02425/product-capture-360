@@ -221,7 +221,16 @@ export class CameraManager {
         if (stderrBuf.length > 8000) stderrBuf = stderrBuf.slice(-8000);
       });
       const result = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(gotFrame), 4000);
+        const timer = setTimeout(() => {
+          // Timeout: kill the process and fail
+          if (!gotFrame) {
+            try { proc.kill('SIGTERM'); } catch {}
+            this.lastErrorMsg = 'Camera initialization timed out - no frames received. Check camera permissions in System Settings → Privacy & Security → Camera';
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        }, 4000);
         proc.on('close', (code) => {
           clearTimeout(timer);
           if (!gotFrame) {

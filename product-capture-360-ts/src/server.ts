@@ -35,7 +35,7 @@ const app = Fastify({
 
 const camera = new CameraManager();
 const storage = new StorageManager();
-const session = new SessionManager(storage, camera);
+const session = new SessionManager(storage, camera, app.log);
 const versionManager = new DatasetVersionManager(process.cwd());
 
 // Error handling middleware
