@@ -77,6 +77,54 @@ export class StorageManager {
   };
 
   /**
+   * Check for existing images with the same product name
+   * Used during session start to detect product-specific collisions
+   */
+  checkProductCollision = (productName: string): FolderCollisionInfo => {
+    const info: FolderCollisionInfo = {
+      exists: false,
+      path: this.currentPath || '',
+      imageCount: 0,
+      totalSize: 0,
+    };
+
+    if (!this.currentPath) {
+      return info;
+    }
+
+    try {
+      if (!fs.existsSync(this.currentPath)) {
+        return info;
+      }
+
+      // Look for files matching the product name pattern: {productName}_capture_*.jpg
+      const pattern = new RegExp(`^${productName}_capture_.*\\.(jpg|jpeg|png|webp)$`, 'i');
+      const entries = fs.readdirSync(this.currentPath);
+
+      for (const entry of entries) {
+        if (pattern.test(entry)) {
+          info.exists = true;
+          const fullPath = path.join(this.currentPath, entry);
+          try {
+            const entryStat = fs.statSync(fullPath);
+            if (entryStat.isFile()) {
+              info.imageCount++;
+              info.totalSize += entryStat.size;
+            }
+          } catch {
+            // Skip files we can't read
+          }
+        }
+      }
+    } catch {
+      // If we can't read the folder, treat as not existing
+      info.exists = false;
+    }
+
+    return info;
+  };
+
+  /**
    * Check available disk space at given path
    * Production-grade disk space validation
    */
@@ -145,25 +193,12 @@ export class StorageManager {
     return devices;
   };
 
-  setLocation = (basePath: string, allowExisting = false): [boolean, string] => {
+  setLocation = (basePath: string): [boolean, string] => {
     try {
       // If path already ends with rootFolderName, don't add it again
       const target = basePath.endsWith(this.rootFolderName)
         ? basePath
         : path.join(basePath, this.rootFolderName);
-
-      // Production-grade folder collision detection
-      const collision = this.checkFolderCollision(target);
-      if (collision.exists && !allowExisting) {
-        const sizeMB = (collision.totalSize / (1024 * 1024)).toFixed(2);
-        return [
-          false,
-          `❌ FOLDER COLLISION: Folder already exists at "${target}"\n` +
-          `   📁 Contains ${collision.imageCount} images (${sizeMB} MB)\n` +
-          `   💡 Please choose a different location or delete the existing folder\n` +
-          `   ⚠️  Continuing would risk overwriting or mixing capture sessions`
-        ];
-      }
 
       // Production-grade disk space validation
       const diskSpace = this.checkDiskSpace(target);

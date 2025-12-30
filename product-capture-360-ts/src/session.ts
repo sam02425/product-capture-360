@@ -43,12 +43,27 @@ export class SessionManager {
   private frameBuffer: Buffer[] = [];
   private readonly MAX_FRAME_BUFFER = 10; // Keep last 10 unique frames
   private lastCapturedFrameHash?: string;
+  // Session log file for detailed tracking
+  private sessionLogPath?: string;
+  private sessionLog: any[] = [];
 
   constructor(private storage: StorageManager, private camera: CameraManager, logger?: FastifyBaseLogger) {
     this.logger = logger;
     // Start multiple async save workers
     for (let i = 0; i < this.MAX_PARALLEL_SAVES; i++) {
       this.processSaveQueue();
+    }
+  }
+
+  private writeSessionLog(entry: any) {
+    this.sessionLog.push({ timestamp: new Date().toISOString(), ...entry });
+    if (this.sessionLogPath) {
+      const fs = require('fs');
+      try {
+        fs.writeFileSync(this.sessionLogPath, JSON.stringify(this.sessionLog, null, 2));
+      } catch (e) {
+        console.error('Failed to write session log:', e);
+      }
     }
   }
 
@@ -179,6 +194,23 @@ export class SessionManager {
       return [false, '❌ PRE-FLIGHT FAILED: Product name required\n   🏷️  Provide a product name for this capture session'];
     }
 
+    // 7. Check for existing images with same product name (informational only)
+    const productCollision = this.storage.checkProductCollision(productName);
+    if (productCollision.exists) {
+      const sizeMB = (productCollision.totalSize / (1024 * 1024)).toFixed(2);
+      // Log warning but allow session to continue
+      if (this.logger) {
+        this.logger.warn({
+          event: 'product_name_exists',
+          product: productName,
+          existing_images: productCollision.imageCount,
+          total_size_mb: sizeMB,
+        }, `⚠️  Product "${productName}" already has ${productCollision.imageCount} images (${sizeMB} MB). New captures will be added.`);
+      } else {
+        console.warn(`⚠️  Product "${productName}" already has ${productCollision.imageCount} images (${sizeMB} MB). New captures will be added.`);
+      }
+    }
+
     return [true, '✅ Pre-flight checks passed'];
   };
 
@@ -211,6 +243,23 @@ export class SessionManager {
 
     const targetImages = durationSec ? Math.floor((durationSec * ratePerMin) / 60) : undefined;
 
+    // Create session log file
+    const path = require('path');
+    const sessionId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    this.sessionLogPath = path.join(this.storage.currentPath || '.', `session_${productName}_${sessionId}.json`);
+    this.sessionLog = [];
+
+    // Log session start
+    this.writeSessionLog({
+      event: 'session_started',
+      product: productName,
+      rate_per_minute: ratePerMin,
+      duration_seconds: durationSec,
+      target_images: targetImages,
+      interval_ms: intervalMs,
+      storage_path: this.storage.currentPath,
+    });
+
     if (this.logger) {
       this.logger.info({
         event: 'session_started',
@@ -228,13 +277,69 @@ export class SessionManager {
     let framesQueued = 0;
     let missedFrames = 0;
     let duplicateFrames = 0;
+    let expectedNextCapture = this.startTs + intervalMs;
+    let isRunning = true;
+    const maxCaptures = targetImages || Number.MAX_SAFE_INTEGER;
 
-    this.timer = setInterval(() => {
+    // Use high-precision recursive setTimeout with drift compensation
+    // This ensures EXACT timing even when system is busy
+    const scheduleNextCapture = () => {
+      if (!isRunning) return;
+
+      // Check if we've reached target count BEFORE capturing
+      if (framesQueued >= maxCaptures) {
+        const remaining = this.saveQueue.length;
+        const sessionDurationMs = Date.now() - this.startTs;
+
+        if (this.logger) {
+          this.logger.info({
+            event: 'session_completed',
+            product: this.productName || 'unknown',
+            duration_seconds: durationSec,
+            actual_duration_ms: sessionDurationMs,
+            frames_queued: framesQueued,
+            frames_saved: this.captured,
+            frames_pending: remaining,
+            unique_frames: framesQueued - duplicateFrames,
+            duplicate_frames: duplicateFrames,
+            missed_frames: missedFrames,
+            unique_percentage: framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(2) + '%' : 'N/A',
+            total_success: this.metrics.totalSuccess,
+            total_failed: this.metrics.totalFailed,
+            success_rate: this.metrics.totalAttempts > 0
+              ? ((this.metrics.totalSuccess / this.metrics.totalAttempts) * 100).toFixed(2) + '%'
+              : 'N/A',
+            storage_path: this.storage.currentPath || 'NOT_SET',
+          }, `🏁 Session completed: ${this.captured} images saved, ${remaining} pending, ${framesQueued - duplicateFrames} unique frames (${framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1) : '0'}%)`);
+        } else {
+          console.log(`Session duration ${durationSec}s reached. Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${remaining}. Stopping capture, queue will continue processing.`);
+        }
+
+        // Log session completion to session file
+        this.writeSessionLog({
+          event: 'session_completed',
+          frames_queued: framesQueued,
+          frames_saved: this.captured,
+          frames_pending: remaining,
+          unique_frames: framesQueued - duplicateFrames,
+          duplicate_frames: duplicateFrames,
+          missed_frames: missedFrames,
+          unique_percentage: framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(2) : 0,
+          actual_duration_ms: sessionDurationMs,
+          queue_status: this.saveQueue.map(item => ({ product: item.productName, size: item.buffer.length })),
+        });
+
+        isRunning = false;
+        this.stop();
+        return;
+      }
+
+      // ALWAYS queue a frame every tick to maintain exact capture rate
       const buf = this.camera.getLatestJPEG();
 
       if (buf) {
         // Create a simple hash to detect duplicate frames
-        const frameHash = buf.slice(0, 100).toString('base64'); // Hash first 100 bytes for speed
+        const frameHash = buf.subarray(0, 100).toString('base64'); // Hash first 100 bytes for speed
 
         // Check if this is a new unique frame
         const isNewFrame = frameHash !== this.lastCapturedFrameHash;
@@ -251,91 +356,96 @@ export class SessionManager {
           framesQueued++;
         } else {
           // DUPLICATE FRAME - Camera hasn't produced a new frame yet
-          // Use the oldest frame from buffer to maintain capture rate
+          // ALWAYS queue something to maintain rate
+          // Keep at least one frame in buffer by not shifting when buffer has only 1 item
           if (this.frameBuffer.length > 1) {
             // Use oldest buffered frame (will be slightly different angle)
             const oldFrame = this.frameBuffer[0];
             this.saveQueue.push({ buffer: oldFrame, productName: this.productName });
             framesQueued++;
             duplicateFrames++;
-          } else if (this.frameBuffer.length === 1) {
-            // Only one frame available, reuse it to maintain rate
+          } else {
+            // Use current frame to maintain rate (buffer has 0 or 1 frame)
+            // Always add to buffer to ensure we have at least one frame
+            if (this.frameBuffer.length === 0) {
+              this.frameBuffer.push(buf);
+            }
             this.saveQueue.push({ buffer: buf, productName: this.productName });
             framesQueued++;
             duplicateFrames++;
-          } else {
-            // No frames in buffer at all (shouldn't happen but handle it)
-            missedFrames++;
           }
         }
-
-        // Only log every 50 frames to reduce overhead
-        if (framesQueued % 50 === 0) {
-          const queueSize = this.saveQueue.length;
-          const frameRate = framesQueued / ((Date.now() - this.startTs) / 1000);
-          const uniquePercent = ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1);
-          console.log(`[Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${queueSize}, Rate: ${frameRate.toFixed(1)}/s, Unique: ${uniquePercent}%, Dupes: ${duplicateFrames}]`);
-        }
       } else {
-        // NO FRAME AT ALL from camera - use buffer if available
+        // NO FRAME AT ALL from camera - buffer should save us here
         if (this.frameBuffer.length > 0) {
-          // Use oldest frame from buffer to maintain capture rate
+          // Use frame from buffer to maintain capture rate - buffer should never be empty after first capture
           const bufferedFrame = this.frameBuffer[0];
           this.saveQueue.push({ buffer: bufferedFrame, productName: this.productName });
           framesQueued++;
           duplicateFrames++;
         } else {
-          // No frames available anywhere - this is a real miss
+          // Buffer is empty AND camera has no frames
+          // Skip this capture but count it anyway so session progresses
+          framesQueued++;
           missedFrames++;
 
-          if (missedFrames % 10 === 0) {
+          this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
+          if (missedFrames === 1) {
             if (this.logger) {
               this.logger.warn({
-                event: 'camera_frame_miss',
+                event: 'waiting_for_first_frame',
                 product: this.productName || 'unknown',
-                missed_count: missedFrames,
-                queued_count: framesQueued,
-                capture_rate: ratePerMin,
-              }, `⚠️  Camera not keeping up: ${missedFrames} missed frames at ${ratePerMin}/min rate`);
+                message: 'Waiting for camera to provide first frame...',
+              }, '⏳ Waiting for first camera frame...');
             } else {
-              console.warn(`⚠️  No camera frames available (${missedFrames} real misses). Increase camera FPS or reduce capture rate.`);
+              console.warn('⏳ Waiting for camera to provide first frame...');
             }
           }
         }
       }
-      if (this.durationSec) {
-        const elapsed = (Date.now() - this.startTs) / 1000;
-        if (elapsed >= this.durationSec) {
-          const remaining = this.saveQueue.length;
-          const sessionDurationMs = Date.now() - this.startTs;
 
-          if (this.logger) {
-            this.logger.info({
-              event: 'session_completed',
-              product: this.productName || 'unknown',
-              duration_seconds: durationSec,
-              actual_duration_ms: sessionDurationMs,
-              frames_queued: framesQueued,
-              frames_saved: this.captured,
-              frames_pending: remaining,
-              unique_frames: framesQueued - duplicateFrames,
-              duplicate_frames: duplicateFrames,
-              missed_frames: missedFrames,
-              unique_percentage: framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(2) + '%' : 'N/A',
-              total_success: this.metrics.totalSuccess,
-              total_failed: this.metrics.totalFailed,
-              success_rate: this.metrics.totalAttempts > 0
-                ? ((this.metrics.totalSuccess / this.metrics.totalAttempts) * 100).toFixed(2) + '%'
-                : 'N/A',
-              storage_path: this.storage.currentPath || 'NOT_SET',
-            }, `🏁 Session completed: ${this.captured} images saved, ${remaining} pending, ${framesQueued - duplicateFrames} unique frames (${((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1)}%)`);
-          } else {
-            console.log(`Session duration ${durationSec}s reached. Queued: ${framesQueued}, Saved: ${this.captured}, Pending: ${remaining}. Stopping capture, queue will continue processing.`);
-          }
-          this.stop();
-        }
+      // Log every 50 frames to reduce overhead
+      if (framesQueued % 50 === 0 && framesQueued > 0) {
+        const queueSize = this.saveQueue.length;
+        const actualElapsed = (Date.now() - this.startTs) / 1000;
+        const actualRate = framesQueued / actualElapsed;
+        const targetRate = ratePerMin / 60;
+        const uniquePercent = framesQueued > 0 ? ((framesQueued - duplicateFrames) / framesQueued * 100).toFixed(1) : '0.0';
+        const progress = targetImages ? `${framesQueued}/${targetImages}` : `${framesQueued}`;
+
+        this.writeSessionLog({
+          event: 'progress',
+          frames_queued: framesQueued,
+          frames_saved: this.captured,
+          pending: queueSize,
+          unique_frames: framesQueued - duplicateFrames,
+          duplicate_frames: duplicateFrames,
+          missed_frames: missedFrames,
+          actual_rate: parseFloat(actualRate.toFixed(2)),
+          target_rate: parseFloat(targetRate.toFixed(2)),
+          unique_percentage: parseFloat(uniquePercent),
+        });
+
+        console.log(`[Progress: ${progress}, Saved: ${this.captured}, Pending: ${queueSize}, Rate: ${actualRate.toFixed(2)}/s (target: ${targetRate.toFixed(2)}/s), Unique: ${uniquePercent}%, Dupes: ${duplicateFrames}]`);
       }
-    }, intervalMs);
+
+      // Calculate drift compensation for next capture
+      const now = Date.now();
+      expectedNextCapture += intervalMs;
+      const drift = expectedNextCapture - now;
+
+      // Schedule next capture with drift compensation
+      // Minimum 1ms to prevent busy loop
+      const nextDelay = Math.max(1, drift);
+
+      // Only schedule next if still running
+      if (isRunning) {
+        this.timer = setTimeout(scheduleNextCapture, nextDelay) as any;
+      }
+    };
+
+    // Start the capture loop
+    this.timer = setTimeout(scheduleNextCapture, intervalMs) as any;
     return true;
   };
 
@@ -352,7 +462,7 @@ export class SessionManager {
           buffer_frames: this.frameBuffer.length,
         }, `⏹️  Session stopped: ${this.captured} images captured`);
       }
-      clearInterval(this.timer);
+      clearTimeout(this.timer as any);
     }
     this.timer = undefined;
     // Clear frame buffer when stopping

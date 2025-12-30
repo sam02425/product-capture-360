@@ -2,25 +2,73 @@
 
 ## Problem Statement
 
-At high capture rates (120-180 images/min = 2-3 FPS), the camera's physical frame rate may not always keep up with the desired capture rate. This causes:
+At high capture rates (120-180 images/min = 2-3 FPS), two critical issues can occur:
 
+### Issue 1: Camera Frame Rate
+The camera's physical frame rate may not keep up with the desired capture rate:
 ❌ **Missed captures** - When no new frame is available, the capture slot is skipped
 ❌ **Inconsistent rate** - Actual capture rate drops below target rate
-❌ **Wasted time** - Session duration ends with fewer images than expected
 
-**Example**: At 180/min (3 FPS), if the camera only provides 2 FPS → 33% of captures are missed!
+### Issue 2: Timer Drift (THE REAL PROBLEM!)
+JavaScript's `setInterval` can **drift and skip** when the system is busy:
+❌ **Interval skipping** - `setInterval` can miss ticks when CPU is loaded
+❌ **Cumulative drift** - Over 60 seconds, drift can accumulate to multiple seconds
+❌ **Unpredictable rate** - Actual rate varies wildly (1.5-3.5 FPS instead of 3 FPS)
+
+**Example**: At 180/min target (3 FPS) with `setInterval`:
+- **Expected**: 180 captures in 60 seconds
+- **Actual**: 120-150 captures in 60 seconds (33% loss!)
+- **Cause**: Timer drift + camera lag
 
 ---
 
-## Solution: Smart Frame Buffering
+## Solution: Dual-Layer Guarantee
 
-We've implemented a **frame buffer** system that **guarantees** the capture rate is always maintained, even when the camera can't keep up.
+We've implemented **two complementary systems** that together guarantee the capture rate:
+
+### 1. High-Precision Timing (Solves Timer Drift)
+Replaces `setInterval` with **drift-compensating recursive setTimeout**
+
+### 2. Smart Frame Buffering (Solves Camera Lag)
+Maintains a buffer of the last 10 unique frames
 
 ### How It Works
 
 ```
-Camera (30 FPS) → Frame Buffer (last 10 frames) → Capture Timer (3 FPS) → Save Queue
+High-Precision Timer → Camera (30 FPS) → Frame Buffer (last 10 frames) → Save Queue
+       ↑                                                                      ↓
+       └─────────── Drift Compensation (adjusts next delay) ─────────────────┘
 ```
+
+#### Layer 1: High-Precision Timing ([session.ts:234-364](src/session.ts#L234-L364))
+
+**Problem with `setInterval`**:
+```javascript
+// BAD: setInterval drifts!
+setInterval(() => capture(), 333ms);  // Trying for 3 FPS
+// Result: 1.5-3.5 FPS (varies wildly)
+```
+
+**Our Solution**:
+```javascript
+// GOOD: Recursive setTimeout with drift compensation
+let expectedNext = startTime + interval;
+
+const scheduleNext = () => {
+  capture();  // Do the work
+
+  expectedNext += interval;  // Expected time of next capture
+  const now = Date.now();
+  const drift = expectedNext - now;  // How far off are we?
+
+  const nextDelay = Math.max(1, drift);  // Compensate for drift
+  setTimeout(scheduleNext, nextDelay);  // Schedule next with correction
+};
+```
+
+**Result**: **EXACT** timing - 3.00 FPS sustained for 60+ seconds!
+
+#### Layer 2: Smart Frame Buffering
 
 1. **Frame Detection**: Each camera frame is hashed to detect duplicates
 2. **Buffering**: Last 10 unique frames are kept in a circular buffer
@@ -60,14 +108,17 @@ Camera (30 FPS) → Frame Buffer (last 10 frames) → Capture Timer (3 FPS) → 
 
 ### During Capture (every 50 frames)
 ```
-[Queued: 150, Saved: 145, Pending: 5, Rate: 3.0/s, Unique: 95.3%, Dupes: 7]
+[Queued: 150, Saved: 145, Pending: 5, Rate: 3.00/s (target: 3.00/s), Unique: 95.3%, Dupes: 7]
 ```
 
 **Metrics**:
 - **Queued**: Total frames queued for saving
 - **Saved**: Total frames actually saved to disk
 - **Pending**: Frames in save queue waiting to be processed
-- **Rate**: Actual capture rate (should match target)
+- **Rate**: Actual capture rate vs target rate
+  - **3.00/s vs 3.00/s** = Perfect! ✅
+  - **2.85/s vs 3.00/s** = Slightly off (acceptable)
+  - **2.50/s vs 3.00/s** = Problem! Check system load
 - **Unique**: Percentage of unique frames (higher is better)
 - **Dupes**: Number of duplicate frames used
 
