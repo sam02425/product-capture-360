@@ -1,7 +1,19 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-ultralytics==8.1.10
-opencv-python==4.9.0.80
-pillow==10.2.0
-numpy==1.26.3
-python-multipart==0.0.6
+# Core ML/CV dependencies
+ultralytics>=8.0.0          # YOLO v8/v11 for object detection
+opencv-python>=4.8.0        # Computer vision operations
+pillow>=10.0.0              # Image processing
+numpy>=1.24.0               # Numerical operations
+
+# Optional: Advanced features
+# torch>=2.0.0              # PyTorch (required by ultralytics, will be installed automatically)
+# torchvision>=0.15.0       # Vision models (required by ultralytics)
+
+# Segmentation and advanced annotation
+# segment-anything-2        # SAM2 for advanced segmentation (optional, uncomment if needed)
+
+# Data format support
+pyyaml>=6.0                 # YAML configuration files
+scikit-image>=0.21.0        # Additional image processing
+
+# Performance optimization
+tqdm>=4.65.0                # Progress bars for batch processing

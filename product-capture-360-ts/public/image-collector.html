@@ -520,6 +520,28 @@
 
     .sidebar-section-content {
       padding: 1rem;
+      max-height: 400px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    /* Custom scrollbar for sidebar sections */
+    .sidebar-section-content::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .sidebar-section-content::-webkit-scrollbar-track {
+      background: var(--bg-dark);
+      border-radius: 3px;
+    }
+
+    .sidebar-section-content::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .sidebar-section-content::-webkit-scrollbar-thumb:hover {
+      background: var(--bg-hover);
     }
 
     /* File List */
@@ -1498,6 +1520,7 @@
       <button class="tab active" onclick="switchTab('capture')">📸 Capture</button>
       <button class="tab" onclick="switchTab('augment')">🎨 Augmentation</button>
       <button class="tab" onclick="switchTab('annotate')">🏷️ Annotation</button>
+      <button class="tab" onclick="switchTab('visualize')">🔍 Visualize Dataset</button>
       <button class="tab" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
       <button class="tab" onclick="switchTab('versions')">📦 Versions</button>
       <button class="tab" onclick="switchTab('docs')">📚 Documentation</button>
@@ -2206,6 +2229,63 @@
               </button>
             </div>
           </div>
+
+          <!-- Auto-Annotation Section -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-header">🤖 Auto-Annotation</div>
+            <div class="sidebar-section-content">
+              <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.5rem;">
+                Detect bottles using pre-trained model
+              </p>
+
+              <!-- Model Selection -->
+              <select id="autoAnnotateModel" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text); font-size: 0.875rem;">
+                <option value="yolov8-bottle">YOLOv8 Bottle Detector</option>
+                <option value="yolov11-bottle">YOLOv11 Bottle Detector</option>
+                <option value="custom">Custom Model</option>
+              </select>
+
+              <!-- Confidence Threshold -->
+              <div style="margin-bottom: 0.5rem;">
+                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">
+                  Confidence: <span id="confidenceValue">0.50</span>
+                </label>
+                <input type="range" id="confidenceSlider" min="0" max="100" value="50"
+                  style="width: 100%;"
+                  oninput="document.getElementById('confidenceValue').textContent = (this.value / 100).toFixed(2)">
+              </div>
+
+              <!-- Annotation Options -->
+              <div style="margin-bottom: 0.5rem;">
+                <label style="font-size: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" id="autoLabelFromFolder" checked>
+                  Use folder name as label
+                </label>
+                <label style="font-size: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" id="autoAnnotateAll">
+                  Process all images
+                </label>
+              </div>
+
+              <!-- Action Buttons -->
+              <button class="btn btn-primary" style="width: 100%; margin-bottom: 0.5rem;" onclick="runAutoAnnotation()">
+                ✨ Auto-Annotate Current
+              </button>
+              <button class="btn btn-success" style="width: 100%; margin-bottom: 0.5rem;" onclick="batchAutoAnnotate()">
+                🔄 Batch Auto-Annotate
+              </button>
+
+              <!-- Progress -->
+              <div id="autoAnnotateProgress" style="display: none; margin-top: 0.5rem;">
+                <div style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.25rem;">
+                  Processing: <span id="autoAnnotateStatus">0/0</span>
+                </div>
+                <div style="width: 100%; height: 4px; background: var(--bg-dark); border-radius: 2px; overflow: hidden;">
+                  <div id="autoAnnotateBar" style="width: 0%; height: 100%; background: var(--primary); transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Main Canvas Area -->
@@ -2277,7 +2357,558 @@
         </div>
       </div>
     </div>
+
+    <!-- Tab: Visualize Dataset -->
+    <div class="tab-content" id="visualize-tab">
+      <div class="section">
+        <h2>🔍 Dataset Visualization</h2>
+        <p class="description">
+          View and verify YOLO annotations on your training dataset. Visualize bounding boxes overlaid on images.
+        </p>
+
+        <!-- Dataset Selection -->
+        <div class="form-group">
+          <label>Select Dataset</label>
+          <div style="display: flex; gap: 1rem; align-items: flex-end;">
+            <div style="flex: 1;">
+              <input type="text" id="datasetPathInput" placeholder="/path/to/dataset"
+                value="/Volumes/UBUNTU 24_0/360Photo_Captures/Abasolo_Whiskey_750ml_dataset_20251230_122100"
+                style="width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--bg-dark); color: var(--text); font-family: monospace;">
+            </div>
+            <button class="btn btn-primary" onclick="loadDatasetForVisualization()">📁 Load Dataset</button>
+          </div>
+          <small style="color: var(--text-dim); margin-top: 0.5rem; display: block;">
+            Enter the path to your YOLO dataset directory (must contain images/ and labels/ folders)
+          </small>
+        </div>
+
+        <!-- Dataset Info -->
+        <div id="datasetInfo" style="display: none; margin-top: 1.5rem; padding: 1rem; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem;">
+          <h3 style="margin: 0 0 1rem 0;">Dataset Information</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);">Train Images</div>
+              <div id="trainCount" style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">0</div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);">Val Images</div>
+              <div id="valCount" style="font-size: 1.5rem; font-weight: bold; color: var(--success);">0</div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);">Total Images</div>
+              <div id="totalCount" style="font-size: 1.5rem; font-weight: bold;">0</div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim);">Classes</div>
+              <div id="classCount" style="font-size: 1.5rem; font-weight: bold;">0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div id="visualizationControls" style="display: none; margin-top: 1.5rem;">
+          <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+            <div class="form-group" style="flex: 1; margin: 0;">
+              <label>Dataset Split</label>
+              <select id="splitSelect" onchange="loadImagesForVisualization()" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text);">
+                <option value="train">Train Set</option>
+                <option value="val">Validation Set</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex: 1; margin: 0;">
+              <label>Image</label>
+              <select id="imageSelect" onchange="displaySelectedImage()" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-dark); color: var(--text);">
+              </select>
+            </div>
+            <div style="display: flex; gap: 0.5rem; padding-top: 1.5rem;">
+              <button class="btn" onclick="previousImage()" title="Previous Image">◀️ Prev</button>
+              <button class="btn" onclick="nextImage()" title="Next Image">Next ▶️</button>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+              <input type="checkbox" id="showBboxCheckbox" checked onchange="displaySelectedImage()">
+              Show Bounding Boxes
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+              <input type="checkbox" id="showLabelCheckbox" checked onchange="displaySelectedImage()">
+              Show Labels
+            </label>
+          </div>
+        </div>
+
+        <!-- Visualization Canvas -->
+        <div id="visualizationArea" style="display: none; margin-top: 1rem;">
+          <div style="background: #000; border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; position: relative;">
+            <canvas id="visualizationCanvas" style="display: block; max-width: 100%; height: auto;"></canvas>
+            <div id="imageInfoOverlay" style="position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 0.5rem 1rem; border-radius: 0.25rem; color: white; font-family: monospace; font-size: 0.875rem;"></div>
+          </div>
+
+          <!-- Annotation Details -->
+          <div id="annotationDetails" style="margin-top: 1rem; padding: 1rem; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem;">
+            <h4 style="margin: 0 0 0.5rem 0;">Annotations</h4>
+            <div id="annotationsList" style="max-height: 200px; overflow-y: auto;"></div>
+          </div>
+        </div>
+
+        <!-- Status Message -->
+        <div id="visualizationStatus" style="margin-top: 1rem; padding: 1rem; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.5rem; color: var(--text-dim); text-align: center; display: none;">
+          Loading...
+        </div>
+      </div>
+    </div>
   </div>
+
+  <script>
+    // ==================== AUTO-ANNOTATION FUNCTIONS ====================
+
+    async function runAutoAnnotation() {
+      const currentImage = getCurrentImage();
+      if (!currentImage) {
+        alert('No image selected');
+        return;
+      }
+
+      const model = document.getElementById('autoAnnotateModel').value;
+      const confidence = parseFloat(document.getElementById('confidenceValue').textContent);
+      const useFolderLabel = document.getElementById('autoLabelFromFolder').checked;
+
+      // Get label from folder name if enabled
+      let label = 'bottle';
+      if (useFolderLabel && currentImage.path) {
+        const folderName = currentImage.path.split('/').slice(-2, -1)[0];
+        if (folderName && folderName !== '360Photo_Captures') {
+          label = folderName.replace(/_/g, ' ');
+        }
+      }
+
+      try {
+        showStatus('Running auto-annotation...', 'info');
+
+        const response = await fetch('/api/auto-annotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_path: currentImage.path,
+            model: model,
+            confidence: confidence,
+            label: label
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success && result.detections) {
+          // Add detected bounding boxes to annotations
+          result.detections.forEach(det => {
+            addAnnotation({
+              type: 'bbox',
+              label: label,
+              x: det.x,
+              y: det.y,
+              width: det.width,
+              height: det.height,
+              confidence: det.confidence
+            });
+          });
+
+          showStatus(`Auto-annotated: ${result.detections.length} objects detected`, 'success');
+        } else {
+          showStatus(result.error || 'Auto-annotation failed', 'error');
+        }
+      } catch (error) {
+        showStatus('Auto-annotation error: ' + error.message, 'error');
+      }
+    }
+
+    async function batchAutoAnnotate() {
+      const images = getAllImages();
+      if (images.length === 0) {
+        alert('No images to process');
+        return;
+      }
+
+      const processAll = document.getElementById('autoAnnotateAll').checked;
+      const imagesToProcess = processAll ? images : [getCurrentImage()];
+
+      if (!confirm(`Process ${imagesToProcess.length} images?`)) {
+        return;
+      }
+
+      const progress = document.getElementById('autoAnnotateProgress');
+      const status = document.getElementById('autoAnnotateStatus');
+      const bar = document.getElementById('autoAnnotateBar');
+
+      progress.style.display = 'block';
+
+      let processed = 0;
+
+      for (const image of imagesToProcess) {
+        // Update progress
+        processed++;
+        status.textContent = `${processed}/${imagesToProcess.length}`;
+        bar.style.width = `${(processed / imagesToProcess.length) * 100}%`;
+
+        // Get label from folder
+        let label = 'bottle';
+        if (image.path) {
+          const folderName = image.path.split('/').slice(-2, -1)[0];
+          if (folderName && folderName !== '360Photo_Captures') {
+            label = folderName.replace(/_/g, ' ');
+          }
+        }
+
+        try {
+          const model = document.getElementById('autoAnnotateModel').value;
+          const confidence = parseFloat(document.getElementById('confidenceValue').textContent);
+
+          const response = await fetch('/api/auto-annotate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image_path: image.path,
+              model: model,
+              confidence: confidence,
+              label: label
+            })
+          });
+
+          const result = await response.json();
+
+          if (result.success && result.detections) {
+            // Save annotations for this image
+            saveAnnotationsForImage(image.path, result.detections.map(det => ({
+              type: 'bbox',
+              label: label,
+              x: det.x,
+              y: det.y,
+              width: det.width,
+              height: det.height,
+              confidence: det.confidence
+            })));
+          }
+
+          // Small delay to avoid overwhelming the server
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.error(`Failed to process ${image.path}:`, error);
+        }
+      }
+
+      progress.style.display = 'none';
+      showStatus(`Batch auto-annotation complete: ${processed} images processed`, 'success');
+    }
+
+    function showStatus(message, type) {
+      // Implement status message display
+      console.log(`[${type.toUpperCase()}] ${message}`);
+      // Update status element if it exists
+      const statusEl = document.getElementById('annotationStatus');
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.style.color = type === 'error' ? 'var(--danger)' : type === 'success' ? 'var(--success)' : 'var(--text)';
+      }
+    }
+
+    // Placeholder helper functions - will be implemented by image-collector.js
+    function getCurrentImage() {
+      // This should be implemented in the main image-collector.js
+      return window.currentImage || null;
+    }
+
+    function getAllImages() {
+      // This should be implemented in the main image-collector.js
+      return window.allImages || [];
+    }
+
+    function addAnnotation(annotation) {
+      // This should be implemented in the main image-collector.js
+      console.log('Adding annotation:', annotation);
+    }
+
+    function saveAnnotationsForImage(imagePath, annotations) {
+      // This should be implemented in the main image-collector.js
+      console.log('Saving annotations for:', imagePath, annotations);
+    }
+
+    // ========================================================================
+    // VISUALIZATION TAB FUNCTIONS
+    // ========================================================================
+
+    let visualizationState = {
+      datasetPath: null,
+      currentSplit: 'train',
+      images: [],
+      currentImageIndex: 0,
+      datasetInfo: null
+    };
+
+    async function loadDatasetForVisualization() {
+      const datasetPath = document.getElementById('datasetPathInput').value.trim();
+      if (!datasetPath) {
+        showVisualizationStatus('Please enter a dataset path', 'error');
+        return;
+      }
+
+      showVisualizationStatus('Loading dataset...', 'info');
+
+      try {
+        // Load version_info.json to get dataset metadata
+        const versionResponse = await fetch('/api/read-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: `${datasetPath}/version_info.json` })
+        });
+
+        if (!versionResponse.ok) {
+          throw new Error('Failed to load version_info.json');
+        }
+
+        const versionData = await versionResponse.json();
+        visualizationState.datasetInfo = versionData;
+        visualizationState.datasetPath = datasetPath;
+
+        // Update dataset info display
+        document.getElementById('trainCount').textContent = versionData.statistics.train_images || 0;
+        document.getElementById('valCount').textContent = versionData.statistics.val_images || 0;
+        document.getElementById('totalCount').textContent = versionData.statistics.total_dataset_images || 0;
+        document.getElementById('classCount').textContent = versionData.class_names ? versionData.class_names.length : 1;
+
+        // Show controls
+        document.getElementById('datasetInfo').style.display = 'block';
+        document.getElementById('visualizationControls').style.display = 'block';
+
+        // Load images for the current split
+        await loadImagesForVisualization();
+
+        showVisualizationStatus('Dataset loaded successfully', 'success');
+      } catch (error) {
+        console.error('Failed to load dataset:', error);
+        showVisualizationStatus(`Failed to load dataset: ${error.message}`, 'error');
+      }
+    }
+
+    async function loadImagesForVisualization() {
+      const split = document.getElementById('splitSelect').value;
+      visualizationState.currentSplit = split;
+
+      showVisualizationStatus('Loading images...', 'info');
+
+      try {
+        // List images in the selected split directory
+        const imagesPath = `${visualizationState.datasetPath}/images/${split}`;
+        const response = await fetch('/api/list-directory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: imagesPath })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to list images');
+        }
+
+        const files = await response.json();
+
+        // Filter for image files
+        visualizationState.images = files.filter(f =>
+          f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.png')
+        ).sort();
+
+        // Populate image selector
+        const imageSelect = document.getElementById('imageSelect');
+        imageSelect.innerHTML = '';
+        visualizationState.images.forEach((img, idx) => {
+          const option = document.createElement('option');
+          option.value = idx;
+          option.textContent = img;
+          imageSelect.appendChild(option);
+        });
+
+        if (visualizationState.images.length > 0) {
+          visualizationState.currentImageIndex = 0;
+          document.getElementById('visualizationArea').style.display = 'block';
+          await displaySelectedImage();
+          showVisualizationStatus(`Loaded ${visualizationState.images.length} images from ${split} set`, 'success');
+        } else {
+          showVisualizationStatus(`No images found in ${split} set`, 'warning');
+        }
+      } catch (error) {
+        console.error('Failed to load images:', error);
+        showVisualizationStatus(`Failed to load images: ${error.message}`, 'error');
+      }
+    }
+
+    async function displaySelectedImage() {
+      const index = parseInt(document.getElementById('imageSelect').value);
+      visualizationState.currentImageIndex = index;
+
+      const imageName = visualizationState.images[index];
+      if (!imageName) return;
+
+      const split = visualizationState.currentSplit;
+      const imagePath = `${visualizationState.datasetPath}/images/${split}/${imageName}`;
+      const labelPath = `${visualizationState.datasetPath}/labels/${split}/${imageName.replace(/\.(jpg|jpeg|png)$/i, '.txt')}`;
+
+      showVisualizationStatus('Loading image...', 'info');
+
+      try {
+        // Load image
+        const img = new Image();
+        img.onload = async () => {
+          // Draw image on canvas
+          const canvas = document.getElementById('visualizationCanvas');
+          const ctx = canvas.getContext('2d');
+
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+
+          // Load and draw annotations if checkbox is checked
+          if (document.getElementById('showBboxCheckbox').checked) {
+            try {
+              const labelResponse = await fetch('/api/read-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: labelPath })
+              });
+
+              if (labelResponse.ok) {
+                const labelText = await labelResponse.text();
+                const lines = labelText.trim().split('\n');
+
+                const annotations = [];
+                const showLabels = document.getElementById('showLabelCheckbox').checked;
+
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.font = '16px Arial';
+
+                lines.forEach((line, idx) => {
+                  const parts = line.trim().split(' ');
+                  if (parts.length < 5) return;
+
+                  const classId = parseInt(parts[0]);
+                  const centerX = parseFloat(parts[1]);
+                  const centerY = parseFloat(parts[2]);
+                  const width = parseFloat(parts[3]);
+                  const height = parseFloat(parts[4]);
+
+                  // Convert normalized coordinates to pixels
+                  const x1 = (centerX - width/2) * canvas.width;
+                  const y1 = (centerY - height/2) * canvas.height;
+                  const x2 = (centerX + width/2) * canvas.width;
+                  const y2 = (centerY + height/2) * canvas.height;
+
+                  // Draw bounding box
+                  ctx.strokeRect(x1, y1, x2-x1, y2-y1);
+
+                  // Draw label if enabled
+                  if (showLabels) {
+                    const className = visualizationState.datasetInfo?.class_names?.[classId] || `Class ${classId}`;
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fillRect(x1, y1-25, 200, 25);
+                    ctx.fillStyle = '#000';
+                    ctx.fillText(className, x1+5, y1-7);
+                  }
+
+                  annotations.push({
+                    id: idx,
+                    class: visualizationState.datasetInfo?.class_names?.[classId] || `Class ${classId}`,
+                    bbox: `(${centerX.toFixed(3)}, ${centerY.toFixed(3)}, ${width.toFixed(3)}, ${height.toFixed(3)})`
+                  });
+                });
+
+                // Update annotations list
+                const annotationsList = document.getElementById('annotationsList');
+                if (annotations.length > 0) {
+                  annotationsList.innerHTML = annotations.map(ann => `
+                    <div style="padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; margin-bottom: 0.5rem;">
+                      <div><strong>${ann.class}</strong></div>
+                      <div style="font-size: 0.75rem; color: var(--text-dim); font-family: monospace;">${ann.bbox}</div>
+                    </div>
+                  `).join('');
+                } else {
+                  annotationsList.innerHTML = '<div style="color: var(--text-dim);">No annotations found</div>';
+                }
+              } else {
+                document.getElementById('annotationsList').innerHTML = '<div style="color: var(--text-dim);">No label file found</div>';
+              }
+            } catch (error) {
+              console.error('Failed to load labels:', error);
+            }
+          }
+
+          showVisualizationStatus(`Showing image ${index + 1} of ${visualizationState.images.length}`, 'success');
+        };
+
+        img.onerror = () => {
+          showVisualizationStatus('Failed to load image', 'error');
+        };
+
+        // Load image via API
+        const imageResponse = await fetch('/api/read-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: imagePath, binary: true })
+        });
+
+        if (!imageResponse.ok) {
+          throw new Error('Failed to load image file');
+        }
+
+        const blob = await imageResponse.blob();
+        img.src = URL.createObjectURL(blob);
+
+      } catch (error) {
+        console.error('Failed to display image:', error);
+        showVisualizationStatus(`Failed to display image: ${error.message}`, 'error');
+      }
+    }
+
+    function previousImage() {
+      if (visualizationState.currentImageIndex > 0) {
+        visualizationState.currentImageIndex--;
+        document.getElementById('imageSelect').value = visualizationState.currentImageIndex;
+        displaySelectedImage();
+      }
+    }
+
+    function nextImage() {
+      if (visualizationState.currentImageIndex < visualizationState.images.length - 1) {
+        visualizationState.currentImageIndex++;
+        document.getElementById('imageSelect').value = visualizationState.currentImageIndex;
+        displaySelectedImage();
+      }
+    }
+
+    function showVisualizationStatus(message, type) {
+      const statusEl = document.getElementById('visualizationStatus');
+      statusEl.textContent = message;
+      statusEl.style.display = 'block';
+      statusEl.style.padding = '0.75rem';
+      statusEl.style.borderRadius = '0.5rem';
+      statusEl.style.marginTop = '1rem';
+
+      if (type === 'error') {
+        statusEl.style.background = 'rgba(239, 68, 68, 0.1)';
+        statusEl.style.color = 'var(--danger)';
+        statusEl.style.border = '1px solid var(--danger)';
+      } else if (type === 'success') {
+        statusEl.style.background = 'rgba(34, 197, 94, 0.1)';
+        statusEl.style.color = 'var(--success)';
+        statusEl.style.border = '1px solid var(--success)';
+      } else if (type === 'warning') {
+        statusEl.style.background = 'rgba(251, 191, 36, 0.1)';
+        statusEl.style.color = '#fbbf24';
+        statusEl.style.border = '1px solid #fbbf24';
+      } else {
+        statusEl.style.background = 'rgba(59, 130, 246, 0.1)';
+        statusEl.style.color = 'var(--primary)';
+        statusEl.style.border = '1px solid var(--primary)';
+      }
+    }
+  </script>
 
   <script src="/image-collector.js"></script>
 </body>

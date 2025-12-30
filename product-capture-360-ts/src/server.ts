@@ -38,6 +38,20 @@ const storage = new StorageManager();
 const session = new SessionManager(storage, camera, app.log);
 const versionManager = new DatasetVersionManager(process.cwd());
 
+// Helper function to validate file paths (prevent path traversal)
+function isPathSafe(requestedPath: string, baseDir: string): boolean {
+  const resolved = path.resolve(requestedPath);
+  const base = path.resolve(baseDir);
+  // Path must start with base directory (whitelist approach)
+  return resolved.startsWith(base + path.sep) || resolved === base;
+}
+
+// Helper function to sanitize product names
+function sanitizeProductName(name: string): string {
+  // Allow only alphanumeric, spaces, hyphens, underscores
+  return name.replace(/[^a-zA-Z0-9\s\-_]/g, '').trim().substring(0, 100);
+}
+
 // Error handling middleware
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
@@ -172,6 +186,17 @@ app.post('/api/camera/hard_reset', async () => {
 });
 app.get('/api/camera/health', async () => camera.getMetrics());
 
+// Camera preview/feed endpoint
+app.get('/api/camera/preview', async (_req: any, reply: any) => {
+  const frame = camera.getLatestJPEG();
+  if (!frame) {
+    reply.code(503).send({ error: 'No frame available' });
+    return;
+  }
+
+  reply.type('image/jpeg').send(frame);
+});
+
 // Debounce map: client -> last capture timestamp
 const captureDebounce = new Map<string, number>();
 const DEBOUNCE_MS = 200; // Allow max 5 captures per second
@@ -238,7 +263,14 @@ app.get('/file', async (req: any, reply: any) => {
       return;
     }
 
-    // Security check: prevent path traversal
+    // CRITICAL SECURITY: Prevent path traversal attacks
+    const storageBase = storage.currentPath || process.cwd();
+    if (!isPathSafe(filePath, storageBase)) {
+      req.log.warn({ requestedPath: filePath, base: storageBase }, 'Path traversal attempt blocked');
+      reply.code(403).send({ error: 'Access denied - path outside allowed directory' });
+      return;
+    }
+
     const resolvedPath = path.resolve(filePath);
     if (!fs.existsSync(resolvedPath)) {
       reply.code(404).send({ error: 'File not found' });
@@ -273,7 +305,13 @@ app.get('/api/status', async () => session.status());
 app.post<{ Body: { rate?: number; duration?: number; product_name?: string } }>('/api/session/start', async (req: any) => {
   const rate = Number(req.body?.rate ?? 0);
   const dur = req.body?.duration;
-  const prod = req.body?.product_name;
+  const prod = req.body?.product_name ? sanitizeProductName(req.body.product_name) : undefined;
+
+  // Validate rate
+  if (rate < 0 || rate > 500) {
+    return { success: false, message: 'Invalid rate (must be 0-500)' };
+  }
+
   const ok = session.start(rate, dur, prod);
   return { success: ok };
 });
@@ -313,9 +351,30 @@ app.post<{ Body: { image_path?: string; key_color?: string; tolerance?: number; 
 app.get('/api/file', async (req: any, reply: any) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.searchParams.get('path');
-  if (!p || !fs.existsSync(p)) return reply.status(404).send('Not found');
+
+  if (!p) {
+    return reply.status(400).send({ error: 'Missing path parameter' });
+  }
+
+  // CRITICAL SECURITY: Prevent path traversal attacks
+  const storageBase = storage.currentPath || process.cwd();
+  if (!isPathSafe(p, storageBase)) {
+    req.log.warn({ requestedPath: p, base: storageBase }, 'Path traversal attempt blocked');
+    return reply.status(403).send({ error: 'Access denied' });
+  }
+
+  if (!fs.existsSync(p)) {
+    return reply.status(404).send({ error: 'File not found' });
+  }
+
+  // Check if it's an image file
   const ext = (p.split('.').pop() || '').toLowerCase();
-  const map: any = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+  const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+  if (!allowedExtensions.includes(ext)) {
+    return reply.status(400).send({ error: 'Not an image file' });
+  }
+
+  const map: any = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
   reply.headers({ 'Content-Type': map[ext] || 'application/octet-stream' });
   reply.send(fs.createReadStream(p));
 });
@@ -723,6 +782,118 @@ app.post<{ Body: { output_path: string } }>('/api/ledger/export', async (req: an
     return { success: true, path: req.body.output_path };
   } catch (error: any) {
     return { success: false, error: error?.message || 'Failed to export ledger' };
+  }
+});
+
+// Auto-annotation endpoint
+app.post<{ Body: {
+  image_path: string;
+  model?: string;
+  confidence?: number;
+  label?: string;
+}}>('/api/auto-annotate', async (req: any) => {
+  try {
+    const { image_path, model = 'yolov8-bottle', confidence = 0.5, label = 'bottle' } = req.body;
+
+    if (!image_path) {
+      return { success: false, error: 'Image path required' };
+    }
+
+    // Use YOLO to detect bottles
+    const { runBottleDetection } = await import('./bottle_detection');
+    const detections = await runBottleDetection(image_path, {
+      model,
+      confidence,
+      label
+    });
+
+    return {
+      success: true,
+      detections,
+      count: detections.length
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Auto-annotation failed' };
+  }
+});
+
+// Visualization support endpoints
+app.post<{ Body: { path: string; binary?: boolean } }>('/api/read-file', async (req: any, reply: any) => {
+  try {
+    const filePath = req.body?.path;
+
+    if (!filePath) {
+      return reply.status(400).send({ error: 'Missing path parameter' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return reply.status(404).send({ error: 'File not found' });
+    }
+
+    // Read file
+    if (req.body?.binary) {
+      // Return binary file (images)
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+      }[ext] || 'application/octet-stream';
+
+      // Read entire file into buffer (better for CORS/blob handling)
+      const fileBuffer = fs.readFileSync(filePath);
+      reply.type(contentType).send(fileBuffer);
+    } else {
+      // Return text file (JSON, TXT, YAML)
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      // Try to parse JSON files
+      if (filePath.endsWith('.json')) {
+        try {
+          const json = JSON.parse(content);
+          return reply.send(json);
+        } catch (e) {
+          return reply.send(content);
+        }
+      }
+
+      return reply.send(content);
+    }
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Error reading file');
+    return reply.status(500).send({ error: 'Failed to read file' });
+  }
+});
+
+app.post<{ Body: { path: string } }>('/api/list-directory', async (req: any, reply: any) => {
+  try {
+    const dirPath = req.body?.path;
+
+    if (!dirPath) {
+      return reply.status(400).send({ error: 'Missing path parameter' });
+    }
+
+    if (!fs.existsSync(dirPath)) {
+      return reply.status(404).send({ error: 'Directory not found' });
+    }
+
+    const stats = fs.statSync(dirPath);
+    if (!stats.isDirectory()) {
+      return reply.status(400).send({ error: 'Path is not a directory' });
+    }
+
+    // List files in directory
+    const files = fs.readdirSync(dirPath);
+
+    // Filter out hidden files and system files
+    const filteredFiles = files.filter(f => !f.startsWith('.') && !f.startsWith('_'));
+
+    return reply.send(filteredFiles);
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Error listing directory');
+    return reply.status(500).send({ error: 'Failed to list directory' });
   }
 });
 
