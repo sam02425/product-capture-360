@@ -1,5 +1,6 @@
 import { StorageManager } from './storage';
 import { CameraManager } from './camera';
+import { DataLedger } from './ledger';
 import type { FastifyBaseLogger } from 'fastify';
 
 export interface SessionStatus {
@@ -39,13 +40,15 @@ export class SessionManager {
     totalFailed: 0,
     failureReasons: new Map(),
   };
-  // Frame buffer to handle high capture rates when camera FPS < capture rate
-  private frameBuffer: Buffer[] = [];
-  private readonly MAX_FRAME_BUFFER = 10; // Keep last 10 unique frames
+  // Direct capture - no buffering for lightning-fast performance
   private lastCapturedFrameHash?: string;
+  private lastSavedFrame?: Buffer; // Keep reference to last frame for duplicates only
   // Session log file for detailed tracking
   private sessionLogPath?: string;
   private sessionLog: any[] = [];
+  // Data ledger for crystal-clear tracking
+  private ledger?: DataLedger;
+  private currentSessionId?: string;
 
   constructor(private storage: StorageManager, private camera: CameraManager, logger?: FastifyBaseLogger) {
     this.logger = logger;
@@ -215,6 +218,58 @@ export class SessionManager {
   };
 
   start = (ratePerMin: number, durationSec?: number, productName?: string): boolean => {
+    // FORCE STOP any existing session immediately - no waiting
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+
+    // Kill any zombie processes before starting session
+    try {
+      const { execSync } = require('child_process');
+
+      // Kill zombie FFmpeg camera processes
+      try {
+        execSync('pkill -9 -f "ffmpeg.*avfoundation"', { encoding: 'utf8' });
+        if (this.logger) {
+          this.logger.info({ event: 'zombie_cleanup' }, 'Killed zombie FFmpeg processes');
+        }
+      } catch (e) {
+        // No zombie processes found
+      }
+
+      // Kill zombie Node server processes (except current)
+      try {
+        const currentPid = process.pid;
+        const psOutput = execSync('ps aux | grep "node dist/server.js" | grep -v grep', { encoding: 'utf8' });
+        const lines = psOutput.trim().split('\n');
+
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parseInt(parts[1]);
+
+          if (pid !== currentPid) {
+            try {
+              process.kill(pid, 'SIGKILL');
+              if (this.logger) {
+                this.logger.info({ event: 'zombie_cleanup', pid }, `Killed zombie server process: ${pid}`);
+              }
+            } catch (e) {
+              // Process already dead
+            }
+          }
+        }
+      } catch (e) {
+        // No zombie server processes found
+      }
+
+      // NO WAIT - proceed immediately for lightning-fast start
+    } catch (err) {
+      if (this.logger) {
+        this.logger.warn({ err, event: 'zombie_cleanup_failed' }, 'Failed to clean up zombie processes');
+      }
+    }
+
     // Production-grade pre-flight validation
     const [valid, message] = this.validatePreFlight(productName);
     if (!valid) {
@@ -230,7 +285,10 @@ export class SessionManager {
       return false;
     }
 
-    this.stop();
+    // Clear old session data immediately for lightning-fast new session start
+    this.saveQueue.length = 0; // Clear save queue instantly
+    this.lastSavedFrame = undefined; // Clear reference
+    this.lastCapturedFrameHash = undefined;
     this.captured = 0;
     this.ratePerMin = ratePerMin;
     this.durationSec = durationSec;
@@ -243,10 +301,30 @@ export class SessionManager {
 
     const targetImages = durationSec ? Math.floor((durationSec * ratePerMin) / 60) : undefined;
 
-    // Create session log file
+    // Create session log file in product folder
     const path = require('path');
     const sessionId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    this.sessionLogPath = path.join(this.storage.currentPath || '.', `session_${productName}_${sessionId}.json`);
+
+    // Initialize ledger if not already done
+    if (!this.ledger && this.storage.currentPath) {
+      this.ledger = new DataLedger(this.storage.currentPath);
+    }
+
+    // Save session log in same folder as images
+    if (productName && this.storage.currentPath) {
+      const sanitizedName = productName.replace(/\s+/g, '_');
+      const productFolder = path.join(this.storage.currentPath, sanitizedName);
+      this.sessionLogPath = path.join(productFolder, `session_${sessionId}.json`);
+
+      // Start ledger session
+      if (this.ledger) {
+        this.ledger.startSession(productName, ratePerMin, durationSec || 0, productFolder)
+          .then(id => { this.currentSessionId = id; })
+          .catch(err => console.error('Failed to start ledger session:', err));
+      }
+    } else {
+      this.sessionLogPath = path.join(this.storage.currentPath || '.', `session_${sessionId}.json`);
+    }
     this.sessionLog = [];
 
     // Log session start
@@ -329,64 +407,64 @@ export class SessionManager {
           queue_status: this.saveQueue.map(item => ({ product: item.productName, size: item.buffer.length })),
         });
 
+        // Complete ledger session
+        if (this.ledger && this.currentSessionId) {
+          this.ledger.completeSession(this.currentSessionId, {
+            imagesQueued: framesQueued,
+            imagesSaved: this.captured,
+            imagesFailed: this.metrics.totalFailed,
+            uniqueImages: framesQueued - duplicateFrames,
+            duplicateImages: duplicateFrames,
+            missedFrames: missedFrames,
+          }).catch(err => console.error('Failed to complete ledger session:', err));
+        }
+
         isRunning = false;
         this.stop();
         return;
       }
 
-      // ALWAYS queue a frame every tick to maintain exact capture rate
+      // DIRECT CAPTURE - Get frame and copy immediately, no buffering for lightning-fast performance
       const buf = this.camera.getLatestJPEG();
 
       if (buf) {
-        // Create a simple hash to detect duplicate frames
-        const frameHash = buf.subarray(0, 100).toString('base64'); // Hash first 100 bytes for speed
+        // Create immediate COPY of buffer - this is the secret to lightning-fast capture
+        const frameCopy = Buffer.from(buf);
 
-        // Check if this is a new unique frame
+        // Quick hash to detect duplicate frames (only first 100 bytes for speed)
+        const frameHash = buf.subarray(0, 100).toString('base64');
         const isNewFrame = frameHash !== this.lastCapturedFrameHash;
 
         if (isNewFrame) {
-          // NEW UNIQUE FRAME - Add to buffer and queue immediately
-          this.frameBuffer.push(buf);
-          if (this.frameBuffer.length > this.MAX_FRAME_BUFFER) {
-            this.frameBuffer.shift(); // Remove oldest frame
-          }
+          // NEW UNIQUE FRAME - Direct copy and queue immediately
           this.lastCapturedFrameHash = frameHash;
+          this.lastSavedFrame = frameCopy;
 
-          this.saveQueue.push({ buffer: buf, productName: this.productName });
+          this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
           framesQueued++;
         } else {
-          // DUPLICATE FRAME - Camera hasn't produced a new frame yet
-          // ALWAYS queue something to maintain rate
-          // Keep at least one frame in buffer by not shifting when buffer has only 1 item
-          if (this.frameBuffer.length > 1) {
-            // Use oldest buffered frame (will be slightly different angle)
-            const oldFrame = this.frameBuffer[0];
-            this.saveQueue.push({ buffer: oldFrame, productName: this.productName });
+          // DUPLICATE FRAME - Use last saved frame to maintain exact capture rate
+          if (this.lastSavedFrame) {
+            const duplicateCopy = Buffer.from(this.lastSavedFrame);
+            this.saveQueue.push({ buffer: duplicateCopy, productName: this.productName });
             framesQueued++;
             duplicateFrames++;
           } else {
-            // Use current frame to maintain rate (buffer has 0 or 1 frame)
-            // Always add to buffer to ensure we have at least one frame
-            if (this.frameBuffer.length === 0) {
-              this.frameBuffer.push(buf);
-            }
-            this.saveQueue.push({ buffer: buf, productName: this.productName });
+            // First frame edge case
+            this.lastSavedFrame = frameCopy;
+            this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
             framesQueued++;
-            duplicateFrames++;
           }
         }
       } else {
-        // NO FRAME AT ALL from camera - buffer should save us here
-        if (this.frameBuffer.length > 0) {
-          // Use frame from buffer to maintain capture rate - buffer should never be empty after first capture
-          const bufferedFrame = this.frameBuffer[0];
-          this.saveQueue.push({ buffer: bufferedFrame, productName: this.productName });
+        // NO FRAME from camera - use last saved frame
+        if (this.lastSavedFrame) {
+          const fallbackCopy = Buffer.from(this.lastSavedFrame);
+          this.saveQueue.push({ buffer: fallbackCopy, productName: this.productName });
           framesQueued++;
           duplicateFrames++;
         } else {
-          // Buffer is empty AND camera has no frames
-          // Skip this capture but count it anyway so session progresses
-          framesQueued++;
+          // No frames at all - waiting for camera startup
           missedFrames++;
 
           this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
@@ -459,14 +537,12 @@ export class SessionManager {
           elapsed_seconds: elapsed.toFixed(2),
           images_captured: this.captured,
           queue_remaining: this.saveQueue.length,
-          buffer_frames: this.frameBuffer.length,
         }, `⏹️  Session stopped: ${this.captured} images captured`);
       }
       clearTimeout(this.timer as any);
     }
     this.timer = undefined;
-    // Clear frame buffer when stopping
-    this.frameBuffer = [];
+    // Clear references when stopping
     this.lastCapturedFrameHash = undefined;
     return true;
   };

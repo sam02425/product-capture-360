@@ -614,10 +614,156 @@ app.delete<{ Params: { version: string } }>('/api/versions/:version', async (req
   return { success, message: success ? 'Version deleted' : 'Version not found' };
 });
 
+// ==================== DATA LEDGER API ====================
+
+// Get ledger report
+app.get<{ Querystring: { product?: string; start_date?: string; end_date?: string } }>(
+  '/api/ledger/report',
+  async (req: any) => {
+    try {
+      if (!storage.currentPath) {
+        return { success: false, error: 'Storage not set' };
+      }
+
+      const { DataLedger } = await import('./ledger');
+      const ledger = new DataLedger(storage.currentPath);
+
+      const report = await ledger.generateReport({
+        productName: req.query.product,
+        startDate: req.query.start_date,
+        endDate: req.query.end_date,
+      });
+
+      return { success: true, report };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Failed to generate report' };
+    }
+  }
+);
+
+// Get all sessions
+app.get('/api/ledger/sessions', async () => {
+  try {
+    if (!storage.currentPath) {
+      return { success: false, error: 'Storage not set' };
+    }
+
+    const { DataLedger } = await import('./ledger');
+    const ledger = new DataLedger(storage.currentPath);
+    const sessions = await ledger.getAllSessions();
+
+    return { success: true, sessions };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to get sessions' };
+  }
+});
+
+// Get sessions for a product
+app.get<{ Params: { product: string } }>('/api/ledger/sessions/:product', async (req: any) => {
+  try {
+    if (!storage.currentPath) {
+      return { success: false, error: 'Storage not set' };
+    }
+
+    const { DataLedger } = await import('./ledger');
+    const ledger = new DataLedger(storage.currentPath);
+    const sessions = await ledger.getProductSessions(req.params.product);
+
+    return { success: true, sessions };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to get product sessions' };
+  }
+});
+
+// Get product summaries
+app.get('/api/ledger/products', async () => {
+  try {
+    if (!storage.currentPath) {
+      return { success: false, error: 'Storage not set' };
+    }
+
+    const { DataLedger } = await import('./ledger');
+    const ledger = new DataLedger(storage.currentPath);
+    const products = await ledger.getAllProductSummaries();
+
+    return { success: true, products };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to get products' };
+  }
+});
+
+// Get daily summaries
+app.get('/api/ledger/daily', async () => {
+  try {
+    if (!storage.currentPath) {
+      return { success: false, error: 'Storage not set' };
+    }
+
+    const { DataLedger } = await import('./ledger');
+    const ledger = new DataLedger(storage.currentPath);
+    const daily = await ledger.getAllDailySummaries();
+
+    return { success: true, daily };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to get daily summaries' };
+  }
+});
+
+// Export ledger to CSV
+app.post<{ Body: { output_path: string } }>('/api/ledger/export', async (req: any) => {
+  try {
+    if (!storage.currentPath) {
+      return { success: false, error: 'Storage not set' };
+    }
+
+    const { DataLedger } = await import('./ledger');
+    const ledger = new DataLedger(storage.currentPath);
+    await ledger.exportToCSV(req.body.output_path);
+
+    return { success: true, path: req.body.output_path };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to export ledger' };
+  }
+});
+
 app.get('/', async (req: any, reply: any) => { reply.redirect('/image-collector.html'); });
 
 async function start() {
   try {
+    // Kill any existing server processes before starting
+    try {
+      const { execSync } = require('child_process');
+      const currentPid = process.pid;
+
+      // Find all node processes running dist/server.js
+      try {
+        const psOutput = execSync('ps aux | grep "node dist/server.js" | grep -v grep', { encoding: 'utf8' });
+        const lines = psOutput.trim().split('\n');
+
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parseInt(parts[1]);
+
+          // Don't kill ourselves
+          if (pid !== currentPid) {
+            try {
+              process.kill(pid, 'SIGTERM');
+              app.log.info(`Killed old server process: PID ${pid}`);
+            } catch (e) {
+              // Process might already be dead
+            }
+          }
+        }
+      } catch (e) {
+        // No existing processes found (grep returns non-zero if no match)
+      }
+
+      // Wait a bit for processes to die
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (err: any) {
+      app.log.warn({ err }, 'Failed to clean up old server processes');
+    }
+
     // Register plugins
     await app.register(fastifyCors, { origin: true });
     await app.register(fastifyStatic, { root: path.join(process.cwd(), 'public') });

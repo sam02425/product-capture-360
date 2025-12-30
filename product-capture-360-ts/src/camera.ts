@@ -161,10 +161,27 @@ export class CameraManager {
   };
 
   stop = async () => {
+    // Kill current FFmpeg instance
     if (this.ffmpeg) {
       try { this.ffmpeg.kill('SIGTERM'); } catch {}
       this.ffmpeg = undefined;
     }
+
+    // Kill any zombie FFmpeg camera processes
+    try {
+      const { execSync } = require('child_process');
+      // Find all FFmpeg processes with avfoundation/dshow/v4l2 (camera processes)
+      try {
+        execSync('pkill -f "ffmpeg.*avfoundation"', { encoding: 'utf8' });
+      } catch (e) {
+        // No processes found or already dead
+      }
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+
+    // Wait a bit for cleanup
+    await new Promise(resolve => setTimeout(resolve, 500));
   };
 
   reconnect = async (): Promise<boolean> => {

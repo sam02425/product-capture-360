@@ -262,11 +262,23 @@ export class StorageManager {
   saveImage = (jpg: Buffer, productName?: string, highRes?: boolean): [boolean, string] => {
     if (!this.currentPath) return [false, 'No storage selected'];
     try {
+      // Create product-specific subfolder if productName is provided
+      let targetPath = this.currentPath;
+      if (productName) {
+        const sanitizedName = productName.replace(/\s+/g, '_');
+        targetPath = path.join(this.currentPath, sanitizedName);
+
+        // Create folder if it doesn't exist
+        if (!fs.existsSync(targetPath)) {
+          fs.mkdirSync(targetPath, { recursive: true });
+        }
+      }
+
       const ts = this.generateTimestamp();
       const namePart = productName ? productName.replace(/\s+/g, '_') + '_' : '';
       const resPart = highRes ? 'hires_' : '';
       const fname = `${namePart}${resPart}capture_${ts}.jpg`;
-      const fpath = path.join(this.currentPath, fname);
+      const fpath = path.join(targetPath, fname);
       fs.writeFileSync(fpath, jpg);
       return [true, fpath];
     } catch (e: any) {
@@ -277,11 +289,23 @@ export class StorageManager {
   saveImageAsync = async (jpg: Buffer, productName?: string, highRes?: boolean): Promise<[boolean, string]> => {
     if (!this.currentPath) return [false, 'No storage selected'];
     try {
+      // Create product-specific subfolder if productName is provided
+      let targetPath = this.currentPath;
+      if (productName) {
+        const sanitizedName = productName.replace(/\s+/g, '_');
+        targetPath = path.join(this.currentPath, sanitizedName);
+
+        // Create folder if it doesn't exist
+        if (!fs.existsSync(targetPath)) {
+          await fsPromises.mkdir(targetPath, { recursive: true });
+        }
+      }
+
       const ts = this.generateTimestamp();
       const namePart = productName ? productName.replace(/\s+/g, '_') + '_' : '';
       const resPart = highRes ? 'hires_' : '';
       const fname = `${namePart}${resPart}capture_${ts}.jpg`;
-      const fpath = path.join(this.currentPath, fname);
+      const fpath = path.join(targetPath, fname);
       await fsPromises.writeFile(fpath, jpg);
       return [true, fpath];
     } catch (e: any) {
