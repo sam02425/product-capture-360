@@ -1,0 +1,18 @@
+      } else {
+        // NO FRAME from camera - skip this capture cycle completely
+        missedFrames++;
+
+        this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
+        if (missedFrames === 1 || missedFrames % 10 === 0) {
+          if (this.logger) {
+            this.logger.warn({
+              event: 'camera_no_frame',
+              product: this.productName || 'unknown',
+              missed_count: missedFrames,
+              message: 'Camera not providing frames. Check camera connection.',
+            }, `⚠️  Camera not providing frames (missed: ${missedFrames})`);
+          } else {
+            console.warn(`⚠️  Camera not providing frames (missed: ${missedFrames})`);
+          }
+        }
+      }

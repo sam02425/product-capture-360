@@ -1,0 +1,37 @@
+      // DIRECT CAPTURE - Get frame and copy immediately, no buffering for lightning-fast performance
+      const buf = this.camera.getLatestJPEG();
+
+      if (buf) {
+        // Create immediate COPY of buffer - this is the secret to lightning-fast capture
+        const frameCopy = Buffer.from(buf);
+
+        // CRITICAL: ALWAYS capture current camera frame - NEVER reuse old frames!
+        // The product is rotating, so every frame must be captured as-is from camera
+        this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
+        framesQueued++;
+
+        // Track frame similarity for statistics only (doesn't affect capture)
+        const crypto = require('crypto');
+        const frameHash = crypto.createHash('md5').update(buf.subarray(0, 1000)).digest('hex');
+        if (frameHash === this.lastCapturedFrameHash) {
+          duplicateFrames++; // Count for stats, but we still saved the frame above
+        }
+        this.lastCapturedFrameHash = frameHash;
+      } else {
+        // NO FRAME from camera - skip this capture cycle completely
+        missedFrames++;
+
+        this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
+        if (missedFrames === 1 || missedFrames % 10 === 0) {
+          if (this.logger) {
+            this.logger.warn({
+              event: 'camera_no_frame',
+              product: this.productName || 'unknown',
+              missed_count: missedFrames,
+              message: 'Camera not providing frames. Check camera connection.',
+            }, `⚠️  Camera not providing frames (missed: ${missedFrames})`);
+          } else {
+            console.warn(`⚠️  Camera not providing frames (missed: ${missedFrames})`);
+          }
+        }
+      }

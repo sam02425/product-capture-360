@@ -2149,7 +2149,13 @@
 
     <!-- Tab 4: Annotation -->
     <div class="tab-content" id="annotate-tab">
-      <div class="annotation-layout">
+      <!-- Professional Annotator (Embedded) -->
+      <iframe src="/annotator.html"
+              style="width: 100%; height: calc(100vh - 60px); border: none; display: block;"
+              title="Professional Annotator"></iframe>
+
+      <!-- Legacy annotation interface (hidden) -->
+      <div class="annotation-layout" style="display: none;">
         <!-- Left Sidebar -->
         <div class="annotation-sidebar">
           <!-- Files Section -->

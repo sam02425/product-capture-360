@@ -264,8 +264,12 @@ app.get('/file', async (req: any, reply: any) => {
     }
 
     // CRITICAL SECURITY: Prevent path traversal attacks
+    // Allow paths from external volumes (/Volumes/) or configured storage
     const storageBase = storage.currentPath || process.cwd();
-    if (!isPathSafe(filePath, storageBase)) {
+    const isExternalVolume = filePath.startsWith('/Volumes/');
+    const isInStorage = isPathSafe(filePath, storageBase);
+
+    if (!isExternalVolume && !isInStorage) {
       req.log.warn({ requestedPath: filePath, base: storageBase }, 'Path traversal attempt blocked');
       reply.code(403).send({ error: 'Access denied - path outside allowed directory' });
       return;

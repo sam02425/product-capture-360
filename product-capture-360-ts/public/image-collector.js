@@ -81,6 +81,39 @@ window.stopSession = stopSession;
 window.compareVersions = compareVersions;
 window.exportVersionMetadata = exportVersionMetadata;
 
+// Camera feed auto-recovery
+let cameraFeedRetryTimer = null;
+
+function setupCameraFeedRecovery() {
+  const preview = document.getElementById('cameraPreview');
+  if (!preview) return;
+
+  // Add error handler to reload feed if it fails
+  preview.onerror = () => {
+    console.warn('Camera feed error, retrying in 2s...');
+
+    // Clear existing retry timer
+    if (cameraFeedRetryTimer) {
+      clearTimeout(cameraFeedRetryTimer);
+    }
+
+    // Retry after 2 seconds
+    cameraFeedRetryTimer = setTimeout(() => {
+      const timestamp = new Date().getTime();
+      preview.src = `/video_feed?t=${timestamp}`;
+    }, 2000);
+  };
+
+  // Add load handler to confirm feed is working
+  preview.onload = () => {
+    console.log('Camera feed connected');
+    if (cameraFeedRetryTimer) {
+      clearTimeout(cameraFeedRetryTimer);
+      cameraFeedRetryTimer = null;
+    }
+  };
+}
+
 // Camera functions
 async function loadCameras() {
   const res = await jget('/api/camera/scan');
@@ -104,6 +137,8 @@ async function loadCameras() {
     // Auto-connect after a short delay to allow UI to update
     setTimeout(async () => {
       await connectCamera();
+      // Setup feed recovery after camera connects
+      setTimeout(setupCameraFeedRecovery, 1000);
     }, 500);
   }
 }
@@ -207,6 +242,14 @@ async function startSession() {
     document.getElementById('sessionStatus').textContent = 'Active';
     document.getElementById('sessionStatus').style.color = 'var(--success)';
 
+    // Keep camera feed alive during session
+    const preview = document.getElementById('cameraPreview');
+    if (preview) {
+      // Force reload the feed to ensure it stays active
+      const timestamp = new Date().getTime();
+      preview.src = `/video_feed?t=${timestamp}`;
+    }
+
     // Show progress section
     document.getElementById('sessionProgress').style.display = 'block';
     sessionStartTime = Date.now();
@@ -224,6 +267,19 @@ async function startSession() {
         document.getElementById('sessionProgress').style.display = 'none';
         state.capturedCount = status.capturedCount || 0;
         document.getElementById('capturedCount').textContent = state.capturedCount;
+
+        // Show completion message with storage location
+        const storageMsg = state.currentPath
+          ? `\n\nImages saved to:\n${state.currentPath}/${productName.replace(/\s+/g, '_')}/`
+          : '';
+        alert(`Session completed!\n\nCaptured: ${state.capturedCount} images${storageMsg}`);
+
+        // Refresh camera feed after session ends
+        const preview = document.getElementById('cameraPreview');
+        if (preview) {
+          const timestamp = new Date().getTime();
+          preview.src = `/video_feed?t=${timestamp}`;
+        }
       } else {
         // Update progress
         const captured = status.capturedCount || 0;

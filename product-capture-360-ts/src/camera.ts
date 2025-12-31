@@ -138,10 +138,10 @@ export class CameraManager {
       srcArg = `/dev/video${index}`;
     }
     const args = be === 'avfoundation'
-      ? ['-hide_banner', '-f', 'avfoundation', '-framerate', String(fps), '-video_size', size, '-i', srcArg, '-vf', `fps=${fps}`, '-f', 'mjpeg', '-q:v', '2', '-']
+      ? ['-hide_banner', '-f', 'avfoundation', '-framerate', String(fps), '-video_size', size, '-i', srcArg, '-vsync', '0', '-f', 'mjpeg', '-q:v', '2', '-']
       : (be === 'dshow'
-        ? ['-hide_banner', '-f', 'dshow', '-video_size', size, '-framerate', String(fps), '-i', srcArg, '-vf', `fps=${fps}`, '-f', 'mjpeg', '-q:v', '2', '-']
-        : ['-hide_banner', '-f', 'v4l2', '-framerate', String(fps), '-video_size', size, '-i', srcArg, '-vf', `fps=${fps}`, '-f', 'mjpeg', '-q:v', '2', '-']);
+        ? ['-hide_banner', '-f', 'dshow', '-video_size', size, '-framerate', String(fps), '-i', srcArg, '-vsync', '0', '-f', 'mjpeg', '-q:v', '2', '-']
+        : ['-hide_banner', '-f', 'v4l2', '-framerate', String(fps), '-video_size', size, '-i', srcArg, '-vsync', '0', '-f', 'mjpeg', '-q:v', '2', '-']);
 
     const ok = await this.tryStart(args);
     if (!ok && be === 'avfoundation') {
@@ -204,7 +204,15 @@ export class CameraManager {
     };
   };
 
-  getLatestJPEG = (): Buffer | undefined => this.latestFrame;
+  getLatestJPEG = (): Buffer | undefined => {
+    // CRITICAL: Create a copy to prevent blocking FFmpeg's frame updates
+    if (!this.latestFrame) return undefined;
+
+    // Create a NEW buffer copy so FFmpeg can continue updating this.latestFrame
+    const copy = Buffer.allocUnsafe(this.latestFrame.length);
+    this.latestFrame.copy(copy);
+    return copy;
+  };
 
   getLastError = (): string | null => this.lastErrorMsg;
 
@@ -222,6 +230,9 @@ export class CameraManager {
         const eoi = buf.indexOf(Buffer.from([0xff, 0xd9]), soi + 2);
         if (soi !== -1 && eoi !== -1) {
           const frame = buf.subarray(soi, eoi + 2);
+          const crypto = require('crypto');
+          const hash = crypto.createHash('md5').update(frame).digest('hex').substring(0, 8);
+          console.log(`📷 FFmpeg NEW frame: ${hash} (${frame.length} bytes)`);
           this.latestFrame = frame;
           this.lastFrameTs = Date.now();
           chunks = [];
@@ -230,7 +241,11 @@ export class CameraManager {
           chunks = [];
         }
       };
-      proc.stdout.on('data', onData);
+      // CRITICAL: Use setImmediate to prevent blocking FFmpeg's stdout
+      // This ensures FFmpeg can always write new frames without waiting
+      proc.stdout.on('data', (d: Buffer) => {
+        setImmediate(() => onData(d));
+      });
       proc.stderr.on('data', (d: Buffer) => {
         const s = d.toString();
         stderrBuf += s;

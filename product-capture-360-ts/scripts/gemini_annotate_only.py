@@ -38,7 +38,17 @@ class GeminiAnnotator:
 
         # Initialize Gemini
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro-vision')
+        # Try Gemini 2.0 Flash first, fallback to pro-vision
+        try:
+            self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            print("✅ Using Gemini 2.0 Flash (Experimental)")
+        except:
+            try:
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                print("✅ Using Gemini 1.5 Flash")
+            except:
+                self.model = genai.GenerativeModel('gemini-pro-vision')
+                print("✅ Using Gemini Pro Vision")
 
         # Stats
         self.stats = {

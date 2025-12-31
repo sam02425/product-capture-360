@@ -42,6 +42,7 @@ export class SessionManager {
   };
   // Direct capture - no buffering for lightning-fast performance
   private lastCapturedFrameHash?: string;
+  private lastSavedFrame?: Buffer; // Keep reference to last frame for duplicates only
   // Session log file for detailed tracking
   private sessionLogPath?: string;
   private sessionLog: any[] = [];
@@ -240,6 +241,7 @@ export class SessionManager {
 
     // Clear old session data immediately for lightning-fast new session start
     this.saveQueue.length = 0; // Clear save queue instantly
+    this.lastSavedFrame = undefined; // Clear reference
     this.lastCapturedFrameHash = undefined;
     this.captured = 0;
     this.ratePerMin = ratePerMin;
@@ -376,75 +378,60 @@ export class SessionManager {
         return;
       }
 
-// DIRECT CAPTURE - Get frame and copy immediately, no buffering for lightning-fast performance
+      // DIRECT CAPTURE - Get frame and copy immediately, no buffering for lightning-fast performance
       const buf = this.camera.getLatestJPEG();
 
       if (buf) {
-        // CRITICAL: ALWAYS capture current camera frame - NEVER reuse old frames!
-        // The product is rotating, so every frame must be captured as-is from camera
+        // Create immediate COPY of buffer - this is the secret to lightning-fast capture
         const frameCopy = Buffer.from(buf);
 
-        // DEBUG: Log frame hash to verify we're getting different frames
-        const crypto = require('crypto');
-        const frameHash = crypto.createHash('md5').update(buf).digest('hex');
-        const isDuplicate = frameHash === this.lastCapturedFrameHash;
+        // Quick hash to detect duplicate frames (only first 100 bytes for speed)
+        const frameHash = buf.subarray(0, 100).toString('base64');
+        const isNewFrame = frameHash !== this.lastCapturedFrameHash;
 
-        if (isDuplicate) {
-          duplicateFrames++;
-          console.log(`⚠️  DUPLICATE FRAME #${framesQueued + 1}: Camera providing same frame! Hash: ${frameHash.substring(0, 8)}...`);
+        if (isNewFrame) {
+          // NEW UNIQUE FRAME - Direct copy and queue immediately
+          this.lastCapturedFrameHash = frameHash;
+          this.lastSavedFrame = frameCopy;
 
-          // 🚨 CODE RED: If we get 10+ consecutive duplicates, camera is STUCK
-          if (duplicateFrames >= 10 && (duplicateFrames === framesQueued)) {
-            const errorMsg = `🚨 CODE RED: CAMERA FROZEN! ${duplicateFrames} consecutive identical frames detected!\n` +
-                           `Frame hash: ${frameHash}\n` +
-                           `This is UNACCEPTABLE for 360° product capture.\n` +
-                           `ABORTING SESSION IMMEDIATELY.`;
-            console.error(errorMsg);
-
-            if (this.logger) {
-              this.logger.error({
-                event: 'camera_frozen_abort',
-                product: this.productName || 'unknown',
-                duplicate_count: duplicateFrames,
-                total_frames: framesQueued,
-                frame_hash: frameHash,
-              }, 'Camera stuck on single frame - session aborted');
-            }
-
-            this.writeSessionLog({
-              event: 'camera_frozen_abort',
-              duplicate_count: duplicateFrames,
-              total_frames: framesQueued,
-              frame_hash: frameHash,
-            });
-
-            isRunning = false;
-            this.stop();
-            throw new Error(`CAMERA FROZEN: All ${duplicateFrames} frames are identical! Camera is not updating. Check camera connection and restart.`);
-          }
+          this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
+          framesQueued++;
         } else {
-          console.log(`✓ NEW FRAME #${framesQueued + 1}: Hash: ${frameHash.substring(0, 8)}... (size: ${buf.length} bytes)`);
-        }
-
-        this.lastCapturedFrameHash = frameHash;
-
-        // ALWAYS save the frame (even if duplicate - maybe camera is slow to update)
-        this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
-        framesQueued++;
-      } else {
-        // NO FRAME from camera - skip this capture cycle
-        missedFrames++;
-
-        this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
-        if (missedFrames === 1) {
-          if (this.logger) {
-            this.logger.warn({
-              event: 'waiting_for_first_frame',
-              product: this.productName || 'unknown',
-              message: 'Waiting for camera to provide first frame...',
-            }, '⏳ Waiting for first camera frame...');
+          // DUPLICATE FRAME - Use last saved frame to maintain exact capture rate
+          if (this.lastSavedFrame) {
+            const duplicateCopy = Buffer.from(this.lastSavedFrame);
+            this.saveQueue.push({ buffer: duplicateCopy, productName: this.productName });
+            framesQueued++;
+            duplicateFrames++;
           } else {
-            console.warn('⏳ Waiting for first camera frame...');
+            // First frame edge case
+            this.lastSavedFrame = frameCopy;
+            this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
+            framesQueued++;
+          }
+        }
+      } else {
+        // NO FRAME from camera - use last saved frame
+        if (this.lastSavedFrame) {
+          const fallbackCopy = Buffer.from(this.lastSavedFrame);
+          this.saveQueue.push({ buffer: fallbackCopy, productName: this.productName });
+          framesQueued++;
+          duplicateFrames++;
+        } else {
+          // No frames at all - waiting for camera startup
+          missedFrames++;
+
+          this.writeSessionLog({ event: 'frame_missed', count: missedFrames, queued: framesQueued });
+          if (missedFrames === 1) {
+            if (this.logger) {
+              this.logger.warn({
+                event: 'waiting_for_first_frame',
+                product: this.productName || 'unknown',
+                message: 'Waiting for camera to provide first frame...',
+              }, '⏳ Waiting for first camera frame...');
+            } else {
+              console.warn('⏳ Waiting for camera to provide first frame...');
+            }
           }
         }
       }
