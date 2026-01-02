@@ -313,7 +313,7 @@ export class SessionManager {
 
     // Use high-precision recursive setTimeout with drift compensation
     // This ensures EXACT timing even when system is busy
-    const scheduleNextCapture = () => {
+    const scheduleNextCapture = async () => {
       if (!isRunning) return;
 
       // Check if we've reached target count BEFORE capturing
@@ -376,8 +376,9 @@ export class SessionManager {
         return;
       }
 
-// DIRECT CAPTURE - Get frame and copy immediately, no buffering for lightning-fast performance
-      const buf = this.camera.getLatestJPEG();
+// WAIT FOR NEXT FRAME - Ensures video-like smoothness with zero duplicates
+      // This waits for the camera to provide a NEW frame (different from the last one)
+      const buf = await this.camera.waitForNextFrame(100);
 
       if (buf) {
         // CRITICAL: ALWAYS capture current camera frame - NEVER reuse old frames!

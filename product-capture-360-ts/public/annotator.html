@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Professional Annotator - AI-Powered</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
         * {
             margin: 0;
             padding: 0;
@@ -12,24 +14,25 @@
         }
 
         :root {
-            --bg-primary: #0f0f0f;
-            --bg-secondary: #1a1a1a;
-            --bg-tertiary: #252525;
-            --text-primary: #ffffff;
-            --text-secondary: #a0a0a0;
-            --text-dim: #666666;
-            --border: #333333;
-            --primary: #3b82f6;
-            --primary-hover: #2563eb;
-            --success: #22c55e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --accent: #8b5cf6;
+            --bg-primary: #f6f7fb;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #eef2f7;
+            --text-primary: #0f172a;
+            --text-secondary: #6b7280;
+            --text-dim: #94a3b8;
+            --border: #e5e7eb;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #16a34a;
+            --warning: #d97706;
+            --danger: #dc2626;
+            --accent: #0ea5e9;
+            --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: var(--bg-primary);
+            font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
             color: var(--text-primary);
             height: 100vh;
             overflow: hidden;
@@ -39,19 +42,20 @@
         .navbar {
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border);
-            padding: 0.75rem 1.5rem;
+            box-shadow: var(--shadow);
+            padding: 0.5rem 1.25rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            height: 60px;
+            height: 56px;
         }
 
         .navbar-brand {
-            font-size: 1.25rem;
-            font-weight: 700;
+            font-size: 1.1rem;
+            font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.6rem;
         }
 
         .navbar-actions {
@@ -63,30 +67,32 @@
         /* Main Layout */
         .container {
             display: flex;
-            height: calc(100vh - 60px);
+            height: calc(100vh - 56px);
         }
 
         /* Left Sidebar */
         .sidebar-left {
-            width: 280px;
+            width: 260px;
             background: var(--bg-secondary);
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            box-shadow: var(--shadow);
         }
 
         .sidebar-section {
-            padding: 1rem;
+            padding: 0.85rem 1rem;
             border-bottom: 1px solid var(--border);
         }
 
         .sidebar-section h3 {
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
             color: var(--text-secondary);
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
             font-weight: 600;
+            letter-spacing: 0.08em;
         }
 
         /* Image List */
@@ -99,10 +105,12 @@
             display: flex;
             align-items: center;
             gap: 0.75rem;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             cursor: pointer;
             border-left: 3px solid transparent;
             transition: all 0.2s;
+            border-radius: 0.5rem;
+            margin: 0.2rem 0.5rem;
         }
 
         .image-item:hover {
@@ -110,7 +118,7 @@
         }
 
         .image-item.active {
-            background: var(--bg-tertiary);
+            background: rgba(37, 99, 235, 0.08);
             border-left-color: var(--primary);
         }
 
@@ -132,7 +140,7 @@
         }
 
         .image-name {
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 500;
             white-space: nowrap;
             overflow: hidden;
@@ -140,9 +148,9 @@
         }
 
         .image-meta {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-secondary);
-            margin-top: 0.25rem;
+            margin-top: 0.2rem;
         }
 
         .image-status {
@@ -169,7 +177,7 @@
         .toolbar {
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border);
-            padding: 0.75rem 1rem;
+            padding: 0.5rem 0.75rem;
             display: flex;
             gap: 1rem;
             align-items: center;
@@ -179,18 +187,19 @@
             display: flex;
             gap: 0.25rem;
             background: var(--bg-tertiary);
-            padding: 0.25rem;
-            border-radius: 0.375rem;
+            padding: 0.2rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
         }
 
         .tool-btn {
-            padding: 0.5rem 0.75rem;
+            padding: 0.35rem 0.65rem;
             background: transparent;
             border: none;
             color: var(--text-secondary);
             cursor: pointer;
-            border-radius: 0.25rem;
-            font-size: 0.875rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
             transition: all 0.2s;
             display: flex;
             align-items: center;
@@ -205,6 +214,86 @@
         .tool-btn.active {
             background: var(--primary);
             color: white;
+            box-shadow: 0 8px 16px rgba(37, 99, 235, 0.2);
+        }
+
+        .tool-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .icon svg {
+            width: 100%;
+            height: 100%;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .ai-threshold-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            padding: 0 0.5rem;
+            align-self: center;
+            cursor: help;
+            border-bottom: 1px dotted var(--border);
+        }
+
+        .ai-threshold-help {
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            line-height: 16px;
+            text-align: center;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: help;
+            background: var(--bg-secondary);
+        }
+
+        .ai-sam2-hint {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            padding: 0 0.5rem;
+            align-self: center;
+            display: none;
+        }
+
+        .ai-sam2-draw {
+            display: none;
+            align-self: center;
+        }
+
+        .ai-refine-toggle {
+            margin-bottom: 0.75rem;
+        }
+
+        .ai-refine-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .ai-refine-label input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
         }
 
         /* Canvas Container */
@@ -215,7 +304,14 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #000;
+            background-color: #f8fafc;
+            background-image:
+                linear-gradient(45deg, #e9eef6 25%, transparent 25%),
+                linear-gradient(-45deg, #e9eef6 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #e9eef6 75%),
+                linear-gradient(-45deg, transparent 75%, #e9eef6 75%);
+            background-size: 24px 24px;
+            background-position: 0 0, 0 12px, 12px -12px, -12px 0px;
         }
 
         #annotationCanvas {
@@ -237,13 +333,14 @@
             padding: 0.5rem;
             border-radius: 0.5rem;
             border: 1px solid var(--border);
+            box-shadow: var(--shadow);
         }
 
         .zoom-btn {
             width: 36px;
             height: 36px;
             background: var(--bg-tertiary);
-            border: none;
+            border: 1px solid var(--border);
             color: var(--text-primary);
             border-radius: 0.25rem;
             cursor: pointer;
@@ -257,12 +354,13 @@
 
         /* Right Sidebar */
         .sidebar-right {
-            width: 320px;
+            width: 300px;
             background: var(--bg-secondary);
             border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            box-shadow: var(--shadow);
         }
 
         /* Annotations List */
@@ -274,12 +372,13 @@
 
         .annotation-card {
             background: var(--bg-tertiary);
-            padding: 0.75rem;
+            padding: 0.65rem 0.75rem;
             border-radius: 0.5rem;
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.6rem;
             border: 2px solid transparent;
             cursor: pointer;
             transition: all 0.2s;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
         }
 
         .annotation-card:hover {
@@ -300,7 +399,7 @@
 
         .annotation-label {
             font-weight: 600;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
         }
 
         .annotation-actions {
@@ -333,14 +432,14 @@
         }
 
         .annotation-coords {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-secondary);
             font-family: 'Courier New', monospace;
         }
 
         /* Labels Panel */
         .labels-panel {
-            padding: 1rem;
+            padding: 0.85rem 1rem;
             border-bottom: 1px solid var(--border);
         }
 
@@ -348,10 +447,10 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem;
+            padding: 0.45rem 0.5rem;
             border-radius: 0.375rem;
             cursor: pointer;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.4rem;
             transition: all 0.2s;
         }
 
@@ -371,20 +470,20 @@
 
         .label-name {
             flex: 1;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
         }
 
         .label-count {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-secondary);
         }
 
         /* Buttons */
         .btn {
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.85rem;
             border: none;
             border-radius: 0.375rem;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
@@ -396,6 +495,7 @@
         .btn-primary {
             background: var(--primary);
             color: white;
+            box-shadow: 0 10px 16px rgba(37, 99, 235, 0.25);
         }
 
         .btn-primary:hover {
@@ -423,8 +523,8 @@
         }
 
         .btn-sm {
-            padding: 0.375rem 0.75rem;
-            font-size: 0.8125rem;
+            padding: 0.3rem 0.65rem;
+            font-size: 0.75rem;
         }
 
         /* Form Controls */
@@ -432,36 +532,76 @@
         input[type="file"],
         select {
             width: 100%;
-            padding: 0.5rem;
+            padding: 0.45rem 0.55rem;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
             border-radius: 0.375rem;
             color: var(--text-primary);
-            font-size: 0.875rem;
-            margin-top: 0.25rem;
+            font-size: 0.8rem;
+            margin-top: 0.2rem;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 0.45rem 0.55rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 0.375rem;
+            color: var(--text-primary);
+            font-size: 0.8rem;
+            margin-top: 0.2rem;
         }
 
         input[type="text"]:focus,
+        input[type="number"]:focus,
         select:focus {
             outline: none;
             border-color: var(--primary);
         }
 
+        .tool-btn:focus-visible,
+        .btn:focus-visible,
+        .icon-btn:focus-visible,
+        input[type="text"]:focus-visible,
+        input[type="number"]:focus-visible,
+        select:focus-visible {
+            outline: 2px solid rgba(37, 99, 235, 0.25);
+            outline-offset: 2px;
+        }
+
+        .tool-btn:hover,
+        .btn:hover,
+        .icon-btn:hover,
+        .image-item:hover,
+        .label-item:hover,
+        .annotation-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .tool-btn:active,
+        .btn:active,
+        .icon-btn:active {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+
         label {
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 500;
             color: var(--text-secondary);
             display: block;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.2rem;
         }
 
         /* Stats Bar */
         .stats-bar {
             background: var(--bg-tertiary);
-            padding: 0.75rem 1rem;
+            padding: 0.6rem 0.9rem;
             display: flex;
             gap: 2rem;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
+            border-top: 1px solid var(--border);
         }
 
         .stat-item {
@@ -472,12 +612,12 @@
 
         .stat-label {
             color: var(--text-secondary);
-            font-size: 0.75rem;
+            font-size: 0.7rem;
         }
 
         .stat-value {
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 0.9rem;
         }
 
         /* Keyboard Shortcuts Help */
@@ -544,6 +684,44 @@
             margin: 2rem auto;
         }
 
+        .sam2-spinner {
+            width: 16px;
+            height: 16px;
+            border-width: 2px;
+            margin: 0;
+            display: none;
+            opacity: 0;
+            transform: translateY(2px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        .sam2-status {
+            display: none;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            align-self: center;
+            opacity: 0;
+            transform: translateY(2px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        .sam2-done {
+            display: none;
+            align-self: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            background: rgba(22, 163, 74, 0.12);
+            color: var(--success);
+            font-size: 0.75rem;
+            line-height: 1;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transform: translateY(2px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -556,8 +734,10 @@
         }
 
         .empty-state-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 0.75rem;
+            color: var(--text-dim);
         }
 
         /* Scrollbars */
@@ -584,13 +764,60 @@
     <!-- Navbar -->
     <div class="navbar">
         <div class="navbar-brand">
-            <span>🎯</span>
+            <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <line x1="12" y1="2" x2="12" y2="5"></line>
+                    <line x1="12" y1="19" x2="12" y2="22"></line>
+                    <line x1="2" y1="12" x2="5" y2="12"></line>
+                    <line x1="19" y1="12" x2="22" y2="12"></line>
+                </svg>
+            </span>
             <span>Professional Annotator</span>
         </div>
         <div class="navbar-actions">
-            <button class="btn btn-secondary btn-sm" onclick="showShortcuts()">⌨️ Shortcuts</button>
-            <button class="btn btn-secondary btn-sm" onclick="saveProgress()">💾 Save Progress</button>
-            <button class="btn btn-success btn-sm" onclick="exportAnnotations()">📦 Export Dataset</button>
+            <button class="btn btn-secondary btn-sm" onclick="showShortcuts()">
+                <span class="icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+                        <line x1="7" y1="10" x2="7.01" y2="10"></line>
+                        <line x1="10" y1="10" x2="10.01" y2="10"></line>
+                        <line x1="13" y1="10" x2="13.01" y2="10"></line>
+                        <line x1="7" y1="14" x2="17" y2="14"></line>
+                    </svg>
+                </span>
+                Shortcuts
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="saveProgress()">
+                <span class="icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M5 5h11l3 3v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5z"></path>
+                        <path d="M7 5v6h10"></path>
+                    </svg>
+                </span>
+                Save Progress
+            </button>
+            <button class="btn btn-success btn-sm" onclick="exportAnnotations()">
+                <span class="icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M3 7h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path>
+                        <path d="M3 7l4-4h10l4 4"></path>
+                        <path d="M12 11v6"></path>
+                        <path d="M9 14l3 3 3-3"></path>
+                    </svg>
+                </span>
+                Export Dataset
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="window.location.href='/batch-annotator.html'" style="margin-left: 10px;">
+                <span class="icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 3l1.5 3.5L17 8l-3.5 1.5L12 13l-1.5-3.5L7 8l3.5-1.5L12 3z"></path>
+                        <path d="M18 12l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z"></path>
+                    </svg>
+                </span>
+                AI Batch Annotator
+            </button>
         </div>
     </div>
 
@@ -605,17 +832,49 @@
                     <input type="text" id="datasetPath" placeholder="/path/to/images"
                            value="/Volumes/UBUNTU 24_0/360Photo_Captures/Abasolo_Whiskey_750ml">
                 </div>
-                <button class="btn btn-primary btn-sm" style="width: 100%;" onclick="loadDataset()">📂 Load Images</button>
+                <div style="margin-bottom: 1rem;">
+                    <label>AI Confidence Threshold</label>
+                    <input type="number" id="aiConfidence" min="0" max="1" step="0.05" value="0.85">
+                </div>
+                <div style="margin-bottom: 1rem;">
+                    <label>AI Engine</label>
+                    <select id="aiEngine" data-help="aiEngine">
+                        <option value="yolo">YOLO (Detect)</option>
+                        <option value="sam2">SAM2 (Refine Selected Box)</option>
+                        <option value="gemini">Gemini (Coming Soon)</option>
+                    </select>
+                </div>
+                <div class="ai-refine-toggle" id="aiRefineToggle">
+                    <label class="ai-refine-label">
+                        <input type="checkbox" id="aiRefineWithSam2" checked>
+                        Refine YOLO with SAM2
+                    </label>
+                </div>
+                <button class="btn btn-primary btn-sm" style="width: 100%;" onclick="loadDataset()">
+                    <span class="icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M4 7h5l2 2h9v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                        </svg>
+                    </span>
+                    Load Images
+                </button>
             </div>
 
             <div class="sidebar-section">
                 <h3>Images (<span id="imageCount">0</span>)</h3>
-                <input type="text" placeholder="🔍 Search images..." style="margin-bottom: 0.5rem;" oninput="filterImages(this.value)">
+                <input type="text" placeholder="Search images..." style="margin-bottom: 0.5rem;" oninput="filterImages(this.value)">
             </div>
 
             <div class="image-list" id="imageList">
                 <div class="empty-state">
-                    <div class="empty-state-icon">📷</div>
+                    <div class="empty-state-icon">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M4 7h4l2-2h4l2 2h4a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                                <circle cx="12" cy="13" r="3"></circle>
+                            </svg>
+                        </span>
+                    </div>
                     <div>Load a dataset to start annotating</div>
                 </div>
             </div>
@@ -627,34 +886,82 @@
             <div class="toolbar">
                 <div class="tool-group">
                     <button class="tool-btn active" data-tool="bbox" onclick="setTool('bbox')" title="Bounding Box (B)">
-                        📦 Box
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+                            </svg>
+                        </span>
+                        Box
                     </button>
                     <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)">
-                        ➡️ Select
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M5 4l10 7-6 2 2 6-2 .8-2-6-4 2z"></path>
+                            </svg>
+                        </span>
+                        Select
                     </button>
                 </div>
 
                 <div class="tool-group">
-                    <button class="tool-btn" onclick="undo()" title="Undo (Ctrl+Z)">↶ Undo</button>
-                    <button class="tool-btn" onclick="redo()" title="Redo (Ctrl+Y)">↷ Redo</button>
+                    <button class="tool-btn" onclick="undo()" title="Undo (Ctrl+Z)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M9 7l-4 4 4 4"></path>
+                                <path d="M5 11h8a6 6 0 1 1 0 12"></path>
+                            </svg>
+                        </span>
+                        Undo
+                    </button>
+                    <button class="tool-btn" onclick="redo()" title="Redo (Ctrl+Y)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M15 7l4 4-4 4"></path>
+                                <path d="M19 11H11a6 6 0 1 0 0 12"></path>
+                            </svg>
+                        </span>
+                        Redo
+                    </button>
                 </div>
 
                 <div class="tool-group">
-                    <button class="tool-btn" onclick="deleteSelected()" title="Delete (Delete)">🗑️ Delete</button>
+                    <button class="tool-btn" onclick="deleteSelected()" title="Delete (Delete)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M4 7h16"></path>
+                                <path d="M9 7V5h6v2"></path>
+                                <rect x="6" y="7" width="12" height="12" rx="2"></rect>
+                            </svg>
+                        </span>
+                        Delete
+                    </button>
                 </div>
 
                 <div style="flex: 1;"></div>
 
                 <div class="tool-group">
-                    <button class="tool-btn" onclick="aiAutoAnnotate()" title="AI Auto-Annotate">
-                        ✨ AI Detect
+                    <button class="tool-btn" id="aiDetectBtn" onclick="aiAutoAnnotate()" title="AI Auto-Annotate">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M12 3l1.5 3.5L17 8l-3.5 1.5L12 13l-1.5-3.5L7 8l3.5-1.5L12 3z"></path>
+                                <path d="M18 12l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z"></path>
+                            </svg>
+                        </span>
+                        AI Detect
                     </button>
+                    <span class="ai-threshold-label" id="aiThresholdLabel" data-help="aiThreshold">conf: 0.85</span>
+                    <span class="ai-threshold-help" data-help="aiThreshold">?</span>
+                    <span class="ai-sam2-hint" id="sam2Hint">Use selected box</span>
+                    <button class="btn btn-secondary btn-sm ai-sam2-draw" id="sam2DrawBox" type="button" onclick="switchToBoxTool()">Draw box</button>
+                    <div class="spinner sam2-spinner" id="sam2Spinner"></div>
+                    <span class="sam2-status" id="sam2Status">Refining…</span>
+                    <span class="sam2-done" id="sam2Done" aria-label="Refinement complete">✓</span>
                 </div>
             </div>
 
             <!-- Canvas -->
             <div class="canvas-container" id="canvasContainer">
-                <canvas id="annotationCanvas"></canvas>
+                <canvas id="annotationCanvas" tabindex="0"></canvas>
 
                 <div class="zoom-controls">
                     <button class="zoom-btn" onclick="zoomIn()" title="Zoom In (+)">+</button>
@@ -702,7 +1009,15 @@
 
             <div class="annotations-list" id="annotationsList">
                 <div class="empty-state">
-                    <div class="empty-state-icon">📝</div>
+                    <div class="empty-state-icon">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                                <path d="M8 12h8"></path>
+                                <path d="M8 16h8"></path>
+                            </svg>
+                        </span>
+                    </div>
                     <div>No annotations yet</div>
                 </div>
             </div>
@@ -762,9 +1077,10 @@
             <span class="kbd">0</span>
         </div>
 
-        <button class="btn btn-primary" style="width: 100%; margin-top: 1.5rem;" onclick="hideShortcuts()">Close</button>
+            <button class="btn btn-primary" style="width: 100%; margin-top: 1.5rem;" onclick="hideShortcuts()">Close</button>
     </div>
 
+    <script src="/logger.js"></script>
     <script src="/annotator.js"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@ export interface DetectionOptions {
   model?: string;
   confidence?: number;
   label?: string;
+  targetClass?: string;
 }
 
 /**
@@ -23,7 +24,7 @@ export async function runBottleDetection(
   imagePath: string,
   options: DetectionOptions = {}
 ): Promise<Detection[]> {
-  const { model = 'yolov8-bottle', confidence = 0.5, label = 'bottle' } = options;
+  const { model = 'yolov8-bottle', confidence = 0.85, label = 'bottle', targetClass = 'bottle' } = options;
 
   return new Promise((resolve, reject) => {
     // Use Python script to run YOLO detection
@@ -34,7 +35,8 @@ export async function runBottleDetection(
       '--image', imagePath,
       '--model', model,
       '--confidence', confidence.toString(),
-      '--label', label
+      '--label', label,
+      '--target-class', targetClass
     ]);
 
     let stdout = '';

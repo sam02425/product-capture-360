@@ -24,6 +24,7 @@ const state = {
   },
   capturedCount: 0,
   versions: [],
+  lastCameraIndex: null, // Store camera index for resume
 };
 
 // Utility functions
@@ -120,6 +121,12 @@ async function loadCameras() {
   const select = document.getElementById('cameraSelect');
   select.innerHTML = '';
 
+  // Add "None" option as default
+  const noneOption = document.createElement('option');
+  noneOption.value = '';
+  noneOption.textContent = 'None (No camera)';
+  select.appendChild(noneOption);
+
   const cameras = res.cameras.filter(cam => !cam.name.includes('Microphone'));
   cameras.forEach(cam => {
     const option = document.createElement('option');
@@ -128,36 +135,206 @@ async function loadCameras() {
     select.appendChild(option);
   });
 
-  // Auto-connect to first USB camera or first camera if available
-  if (cameras.length > 0) {
-    const usbCamera = cameras.find(cam => cam.name.toLowerCase().includes('usb'));
-    const defaultCamera = usbCamera || cameras[0];
-    select.value = defaultCamera.index;
+  // Select "None" by default (no auto-preview)
+  select.value = '';
 
-    // Auto-connect after a short delay to allow UI to update
-    setTimeout(async () => {
-      await connectCamera();
-      // Setup feed recovery after camera connects
-      setTimeout(setupCameraFeedRecovery, 1000);
-    }, 500);
+  // Stop any running camera and clear preview
+  await stopCameraPreview();
+}
+
+// Called when user selects a camera from dropdown
+async function onCameraSelected() {
+  const idx = document.getElementById('cameraSelect').value;
+
+  if (idx !== '') {
+    // User selected a real camera - start preview
+    await startCameraPreview(parseInt(idx));
+  } else {
+    // User selected "None" - stop camera and clear preview
+    await stopCameraPreview();
   }
+}
+
+// Start camera preview without connecting (just show live feed)
+async function startCameraPreview(cameraIndex) {
+  const res = await jpost('/api/camera/init', {
+    camera_index: cameraIndex,
+    width: 1280,
+    height: 720,
+    fps: 30,
+  });
+
+  if (res.success) {
+    // Store camera index for resume
+    state.lastCameraIndex = cameraIndex;
+
+    // Show Kill Feed button (preview is active)
+    document.getElementById('killFeedBtn').style.display = 'block';
+    document.getElementById('resumeFeedBtn').style.display = 'none';
+
+    // Refresh the preview feed
+    const preview = document.getElementById('cameraPreview');
+    const timestamp = new Date().getTime();
+    preview.src = `/video_feed?t=${timestamp}`;
+    setupCameraFeedRecovery();
+  } else {
+    alert('Failed to start camera preview: ' + res.message);
+  }
+}
+
+// Stop camera preview
+async function stopCameraPreview() {
+  await jpost('/api/camera/stop', {});
+  const preview = document.getElementById('cameraPreview');
+
+  // Clear any retry timers
+  if (cameraFeedRetryTimer) {
+    clearTimeout(cameraFeedRetryTimer);
+    cameraFeedRetryTimer = null;
+  }
+
+  // Remove error handlers to prevent auto-reload
+  preview.onerror = null;
+  preview.onload = null;
+
+  // Hide Kill/Resume Feed buttons
+  document.getElementById('killFeedBtn').style.display = 'none';
+  document.getElementById('resumeFeedBtn').style.display = 'none';
+
+  // Clear the feed source
+  preview.src = '';
+}
+
+// Kill live feed (stops FFmpeg backend completely)
+async function killLiveFeed() {
+  const preview = document.getElementById('cameraPreview');
+
+  // Clear any retry timers
+  if (cameraFeedRetryTimer) {
+    clearTimeout(cameraFeedRetryTimer);
+    cameraFeedRetryTimer = null;
+  }
+
+  // Remove error handlers to prevent auto-reload
+  preview.onerror = null;
+  preview.onload = null;
+
+  // Clear the feed source
+  preview.src = '';
+
+  // Stop the camera backend (kills FFmpeg)
+  await jpost('/api/camera/stop', {});
+
+  // Toggle button visibility
+  document.getElementById('killFeedBtn').style.display = 'none';
+  document.getElementById('resumeFeedBtn').style.display = 'block';
+
+  console.log('Live feed killed - FFmpeg stopped');
+}
+
+// Resume live feed
+async function resumeLiveFeed() {
+  // Restart camera with stored index
+  if (state.lastCameraIndex === null) {
+    alert('No camera was previously selected');
+    return;
+  }
+
+  const res = await jpost('/api/camera/init', {
+    camera_index: state.lastCameraIndex,
+    width: 1280,
+    height: 720,
+    fps: 30,
+  });
+
+  if (res.success) {
+    const preview = document.getElementById('cameraPreview');
+    const timestamp = new Date().getTime();
+    preview.src = `/video_feed?t=${timestamp}`;
+    setupCameraFeedRecovery();
+
+    // Toggle button visibility
+    document.getElementById('killFeedBtn').style.display = 'block';
+    document.getElementById('resumeFeedBtn').style.display = 'none';
+
+    console.log('Live feed resumed - FFmpeg restarted');
+  } else {
+    alert('Failed to resume camera: ' + res.message);
+  }
+}
+
+// Refresh camera list
+async function refreshCameras() {
+  await loadCameras();
 }
 
 async function connectCamera() {
   const idx = document.getElementById('cameraSelect').value;
+  if (!idx) {
+    alert('Please select a camera first');
+    return;
+  }
+
   const res = await jpost('/api/camera/init', {
     camera_index: parseInt(idx),
-    width: 1280,  // Reduced from 1920 for better performance
-    height: 720,  // Reduced from 1080 for better performance
-    fps: 30,      // Increased from 10 for smoother preview
+    width: 1280,
+    height: 720,
+    fps: 30,
   });
 
   if (res.success) {
+    // Store camera index for resume
+    state.lastCameraIndex = parseInt(idx);
+
     document.getElementById('statusBadge').textContent = '🟢 Camera Connected';
     document.getElementById('statusBadge').classList.add('active');
+
+    // Update button states
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    connectBtn.textContent = '✓ Connected';
+    connectBtn.style.backgroundColor = '#22c55e';
+    connectBtn.style.borderColor = '#22c55e';
+    connectBtn.disabled = true;
+    disconnectBtn.style.display = 'block';
+
+    // Show Kill Feed button
+    document.getElementById('killFeedBtn').style.display = 'block';
+    document.getElementById('resumeFeedBtn').style.display = 'none';
+
+    // Refresh feed and setup recovery
+    const preview = document.getElementById('cameraPreview');
+    const timestamp = new Date().getTime();
+    preview.src = `/video_feed?t=${timestamp}`;
+    setTimeout(setupCameraFeedRecovery, 1000);
   } else {
     alert('Camera connection failed: ' + res.message);
   }
+}
+
+async function disconnectCamera() {
+  // Stop camera preview properly
+  await stopCameraPreview();
+
+  document.getElementById('statusBadge').textContent = 'Camera Disconnected';
+  document.getElementById('statusBadge').classList.remove('active');
+
+  // Update button states
+  const connectBtn = document.getElementById('connectBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  connectBtn.textContent = 'Connect Camera';
+  connectBtn.style.backgroundColor = '';
+  connectBtn.style.borderColor = '';
+  connectBtn.disabled = false;
+  disconnectBtn.style.display = 'none';
+
+  // Hide Kill/Resume Feed buttons
+  document.getElementById('killFeedBtn').style.display = 'none';
+  document.getElementById('resumeFeedBtn').style.display = 'none';
+
+  // Select "None" in dropdown
+  const select = document.getElementById('cameraSelect');
+  select.value = '';
 }
 
 // Storage functions

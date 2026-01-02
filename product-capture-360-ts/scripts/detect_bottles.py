@@ -3,7 +3,7 @@ import argparse
 import json
 from ultralytics import YOLO
 
-def detect_bottles(image_path, model_name='yolov8n', confidence=0.5, label='bottle'):
+def detect_bottles(image_path, model_name='yolov8n', confidence=0.85, label='bottle', target_class='bottle'):
     """
     Detect bottles in image using YOLO
     """
@@ -15,6 +15,7 @@ def detect_bottles(image_path, model_name='yolov8n', confidence=0.5, label='bott
 
     detections = []
 
+    target = (target_class or '').strip().lower()
     for result in results:
         boxes = result.boxes
         for box in boxes:
@@ -22,6 +23,10 @@ def detect_bottles(image_path, model_name='yolov8n', confidence=0.5, label='bott
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             conf = box.conf[0].item()
             cls = int(box.cls[0].item())
+            class_name = str(model.names.get(cls, '')).lower()
+
+            if target and class_name != target:
+                continue
 
             # Convert to xywh format
             x = x1
@@ -38,16 +43,18 @@ def detect_bottles(image_path, model_name='yolov8n', confidence=0.5, label='bott
                 'class': label
             })
 
+    detections.sort(key=lambda d: d.get('confidence', 0), reverse=True)
     return detections
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', required=True, help='Path to image')
     parser.add_argument('--model', default='yolov8n', help='Model name')
-    parser.add_argument('--confidence', type=float, default=0.5, help='Confidence threshold')
+    parser.add_argument('--confidence', type=float, default=0.85, help='Confidence threshold')
     parser.add_argument('--label', default='bottle', help='Label for detections')
+    parser.add_argument('--target-class', default='bottle', help='Target class name to keep from the model')
 
     args = parser.parse_args()
 
-    detections = detect_bottles(args.image, args.model, args.confidence, args.label)
+    detections = detect_bottles(args.image, args.model, args.confidence, args.label, args.target_class)
     print(json.dumps(detections))

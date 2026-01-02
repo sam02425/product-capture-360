@@ -8,7 +8,7 @@ const state = {
     images: [],
     currentImageIndex: 0,
     currentImage: null,
-    annotations: {}, // {imageId: [{label, bbox, confidence}]}
+    annotations: {}, // {imageId: [{label, bbox, confidence, polygon}]}
     labels: [
         { id: 0, name: 'Abasolo_Whiskey_750ml', color: '#3b82f6', count: 0 }
     ],
@@ -20,10 +20,45 @@ const state = {
     isDragging: false,
     isDrawing: false,
     startPoint: null,
+    currentPoint: null,
     history: [],
     historyIndex: -1,
     canvas: null,
-    ctx: null
+    ctx: null,
+    // Resize state
+    resizeHandle: null,
+    resizeStartBox: null,
+    // Polygon state
+    polygonPoints: []
+};
+
+const ICONS = {
+    camera: `
+        <span class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+                <path d="M4 7h4l2-2h4l2 2h4a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                <circle cx="12" cy="13" r="3"></circle>
+            </svg>
+        </span>
+    `,
+    note: `
+        <span class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+                <path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                <path d="M8 12h8"></path>
+                <path d="M8 16h8"></path>
+            </svg>
+        </span>
+    `,
+    trash: `
+        <span class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <rect x="6" y="7" width="12" height="12" rx="2"></rect>
+            </svg>
+        </span>
+    `
 };
 
 // Initialize
@@ -31,6 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeCanvas();
     setupKeyboardShortcuts();
     renderLabels();
+    applyHelpTooltips();
+    setupAiThresholdLabel();
+    setupSam2Hint();
     updateStats();
 });
 
@@ -52,11 +90,20 @@ function initializeCanvas() {
 
 // Load Dataset
 async function loadDataset() {
-    const path = document.getElementById('datasetPath').value.trim();
+    const actionId = window.appLogger?.startAction('loadDataset', { component: 'annotator' });
+
+    let path = document.getElementById('datasetPath').value.trim();
     if (!path) {
+        window.appLogger?.warn('Load dataset attempted with empty path');
         alert('Please enter a dataset path');
+        if (actionId) window.appLogger.failAction(actionId, new Error('Empty path'));
         return;
     }
+
+    // Remove trailing slash to avoid double slashes in path
+    path = path.replace(/\/+$/, '');
+
+    window.appLogger?.info('Loading dataset', { path });
 
     try {
         const response = await fetch('/api/list-directory', {
@@ -65,12 +112,24 @@ async function loadDataset() {
             body: JSON.stringify({ path })
         });
 
-        if (!response.ok) throw new Error('Failed to load directory');
+        if (!response.ok) {
+            const error = new Error(`Failed to load directory: ${response.status}`);
+            window.appLogger?.error('Directory listing failed', { path, status: response.status });
+            throw error;
+        }
 
         const files = await response.json();
         const imageFiles = files.filter(f =>
             f.match(/\.(jpg|jpeg|png)$/i) && !f.startsWith('._')
         );
+
+        window.appLogger?.info('Dataset loaded successfully', {
+            path,
+            totalFiles: files.length,
+            imageFiles: imageFiles.length
+        });
+
+        console.log(`Found ${imageFiles.length} images in ${path}`);
 
         state.images = imageFiles.map((filename, idx) => ({
             id: idx,
@@ -79,14 +138,20 @@ async function loadDataset() {
             annotated: false
         }));
 
+        console.log('First image path:', state.images.length > 0 ? state.images[0].path : 'none');
+
         renderImageList();
         if (state.images.length > 0) {
             loadImage(0);
         }
         updateStats();
+
+        if (actionId) window.appLogger.endAction(actionId, true, { imageCount: imageFiles.length });
     } catch (error) {
         console.error('Error loading dataset:', error);
+        window.appLogger?.error('Failed to load dataset', { path }, { error: error.message });
         alert('Failed to load dataset: ' + error.message);
+        if (actionId) window.appLogger.failAction(actionId, error, { path });
     }
 }
 
@@ -95,7 +160,7 @@ function renderImageList() {
     if (state.images.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
-                <div class="empty-state-icon">📷</div>
+                <div class="empty-state-icon">${ICONS.camera}</div>
                 <div>No images found</div>
             </div>
         `;
@@ -110,7 +175,7 @@ function renderImageList() {
             <div class="image-item ${idx === state.currentImageIndex ? 'active' : ''} ${isAnnotated ? 'annotated' : ''}"
                  onclick="loadImage(${idx})">
                 <div class="image-status ${isAnnotated ? 'done' : ''}"></div>
-                <img src="/file?path=${encodeURIComponent(img.path)}"
+                <img src="/api/file?path=${encodeURIComponent(img.path)}"
                      class="image-thumb"
                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/></svg>'">
                 <div class="image-info">
@@ -141,11 +206,26 @@ async function loadImage(index) {
     };
 
     img.onerror = () => {
+        const imageUrl = `/api/file?path=${encodeURIComponent(imageData.path)}`;
         console.error('Failed to load image:', imageData.path);
-        alert('Failed to load image');
+        console.error('URL was:', imageUrl);
+        window.appLogger?.error('Image load failed', {
+            filename: imageData.filename,
+            path: imageData.path,
+            url: imageUrl,
+            index
+        });
+        alert('Failed to load image: ' + imageData.path);
     };
 
-    img.src = `/file?path=${encodeURIComponent(imageData.path)}`;
+    const imageUrl = `/api/file?path=${encodeURIComponent(imageData.path)}`;
+    console.log('Loading image from:', imageUrl);
+    window.appLogger?.debug('Loading image', {
+        filename: imageData.filename,
+        path: imageData.path,
+        index
+    });
+    img.src = imageUrl;
 }
 
 function resizeCanvas() {
@@ -287,6 +367,7 @@ function handleMouseDown(e) {
 
         render();
         renderAnnotationsList();
+        updateSam2Hint();
     }
 }
 
@@ -355,24 +436,25 @@ function handleTouchEnd(e) {
 }
 
 // Annotations Management
-function addAnnotation(bbox) {
+function addAnnotation(bbox, options = {}) {
     const currentImageId = state.images[state.currentImageIndex].id;
+    const { labelId = state.selectedLabelId, confidence = 1.0, createdBy = 'manual' } = options;
 
     if (!state.annotations[currentImageId]) {
         state.annotations[currentImageId] = [];
     }
 
     const annotation = {
-        labelId: state.selectedLabelId,
+        labelId,
         bbox: bbox,
-        confidence: 1.0,
-        createdBy: 'manual'
+        confidence,
+        createdBy
     };
 
     state.annotations[currentImageId].push(annotation);
 
     // Update label count
-    const label = state.labels.find(l => l.id === state.selectedLabelId);
+    const label = state.labels.find(l => l.id === labelId);
     if (label) label.count++;
 
     saveToHistory();
@@ -404,6 +486,7 @@ function deleteAnnotation(index) {
     renderImageList();
     render();
     updateStats();
+    updateSam2Hint();
 }
 
 function deleteSelected() {
@@ -439,7 +522,7 @@ function renderAnnotationsList() {
     if (annotations.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
-                <div class="empty-state-icon">📝</div>
+                <div class="empty-state-icon">${ICONS.note}</div>
                 <div>No annotations yet</div>
             </div>
         `;
@@ -460,7 +543,7 @@ function renderAnnotationsList() {
                     </div>
                     <div class="annotation-actions">
                         <button class="icon-btn delete" onclick="event.stopPropagation(); deleteAnnotation(${idx})">
-                            🗑️
+                            ${ICONS.trash}
                         </button>
                     </div>
                 </div>
@@ -484,11 +567,21 @@ function selectAnnotation(index) {
     state.selectedAnnotationId = index;
     renderAnnotationsList();
     render();
+    updateSam2Hint();
 }
 
 function addNewLabel() {
     const name = prompt('Enter label name:');
     if (!name) return;
+
+    const labelId = ensureLabel(name);
+    state.selectedLabelId = labelId;
+    renderLabels();
+}
+
+function ensureLabel(name) {
+    const existing = state.labels.find(label => label.name === name);
+    if (existing) return existing.id;
 
     const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
     const color = colors[state.labels.length % colors.length];
@@ -500,7 +593,164 @@ function addNewLabel() {
         count: 0
     });
 
-    renderLabels();
+    return state.labels.length - 1;
+}
+
+function getDatasetLabelName() {
+    const input = document.getElementById('datasetPath');
+    const rawPath = (input && input.value ? input.value : '').trim();
+    if (!rawPath) return null;
+    const parts = rawPath.split(/[\\/]/).filter(Boolean);
+    if (!parts.length) return null;
+    return parts[parts.length - 1];
+}
+
+function getAiConfidenceThreshold() {
+    const input = document.getElementById('aiConfidence');
+    const rawValue = input && input.value !== undefined ? input.value : '';
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) return 0.85;
+    return Math.min(1, Math.max(0, parsed));
+}
+
+function setupAiThresholdLabel() {
+    const input = document.getElementById('aiConfidence');
+    if (!input) return;
+    const updateLabel = () => {
+        const label = document.getElementById('aiThresholdLabel');
+        if (!label) return;
+        const value = getAiConfidenceThreshold();
+        label.textContent = `conf: ${value.toFixed(2)}`;
+    };
+    input.addEventListener('input', updateLabel);
+    updateLabel();
+}
+
+const HELP_TOOLTIPS = {
+    aiThreshold: 'Range 0.00–1.00. Higher = stricter detections (fewer boxes); lower = more detections.',
+    aiEngine: 'Choose YOLO for auto-detect, SAM2 to refine a selected box, or Gemini when configured.'
+};
+
+function applyHelpTooltips() {
+    document.querySelectorAll('[data-help]').forEach((el) => {
+        const key = el.getAttribute('data-help');
+        const text = key && HELP_TOOLTIPS[key];
+        if (text) {
+            el.setAttribute('title', text);
+            el.setAttribute('aria-label', text);
+        }
+    });
+}
+
+function getAiEngine() {
+    const select = document.getElementById('aiEngine');
+    return select && select.value ? select.value : 'yolo';
+}
+
+function getSam2AutoRefineEnabled() {
+    const input = document.getElementById('aiRefineWithSam2');
+    return Boolean(input && input.checked);
+}
+
+function setupSam2Hint() {
+    const select = document.getElementById('aiEngine');
+    if (!select) return;
+    select.addEventListener('change', updateSam2Hint);
+    updateSam2Hint();
+}
+
+function updateSam2Hint() {
+    const hint = document.getElementById('sam2Hint');
+    const drawBtn = document.getElementById('sam2DrawBox');
+    const spinner = document.getElementById('sam2Spinner');
+    if (!hint || !drawBtn || !spinner) return;
+    const isSam2 = getAiEngine() === 'sam2';
+    const shouldShow = isSam2 && state.selectedAnnotationId === null;
+    hint.style.display = shouldShow ? 'inline-flex' : 'none';
+    drawBtn.style.display = shouldShow ? 'inline-flex' : 'none';
+    spinner.style.display = 'none';
+
+    const refineToggle = document.getElementById('aiRefineToggle');
+    if (refineToggle) {
+        refineToggle.style.display = getAiEngine() === 'yolo' ? 'block' : 'none';
+    }
+}
+
+function setSam2SpinnerVisible(visible) {
+    const spinner = document.getElementById('sam2Spinner');
+    const button = document.getElementById('aiDetectBtn');
+    const engineSelect = document.getElementById('aiEngine');
+    const status = document.getElementById('sam2Status');
+    const done = document.getElementById('sam2Done');
+    if (!spinner) return;
+    if (visible) {
+        spinner.style.display = 'inline-flex';
+        requestAnimationFrame(() => {
+            spinner.style.opacity = '1';
+            spinner.style.transform = 'translateY(0)';
+        });
+    } else {
+        spinner.style.opacity = '0';
+        spinner.style.transform = 'translateY(2px)';
+        setTimeout(() => {
+            spinner.style.display = 'none';
+        }, 200);
+    }
+    if (status) {
+        if (visible) {
+            status.style.display = 'inline-flex';
+            requestAnimationFrame(() => {
+                status.style.opacity = '1';
+                status.style.transform = 'translateY(0)';
+            });
+        } else {
+            status.style.opacity = '0';
+            status.style.transform = 'translateY(2px)';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 200);
+        }
+    }
+    if (done) {
+        done.style.display = 'none';
+        done.style.opacity = '0';
+        done.style.transform = 'translateY(2px)';
+    }
+    if (button) {
+        button.disabled = visible;
+    }
+    if (engineSelect) {
+        engineSelect.disabled = visible;
+    }
+}
+
+function showSam2DoneTick() {
+    const done = document.getElementById('sam2Done');
+    if (!done) return;
+    done.style.display = 'inline-flex';
+    requestAnimationFrame(() => {
+        done.style.opacity = '1';
+        done.style.transform = 'translateY(0)';
+    });
+    setTimeout(() => {
+        done.style.opacity = '0';
+        done.style.transform = 'translateY(2px)';
+        setTimeout(() => {
+            done.style.display = 'none';
+        }, 200);
+    }, 900);
+}
+
+function switchToBoxTool() {
+    const select = document.getElementById('aiEngine');
+    if (select) {
+        select.value = 'sam2';
+    }
+    setTool('bbox');
+    if (state.canvas && typeof state.canvas.focus === 'function') {
+        state.canvas.focus();
+    }
+    updateSam2Hint();
 }
 
 // Tools
@@ -669,18 +919,191 @@ async function aiAutoAnnotate() {
         return;
     }
 
-    const confirmed = confirm('Use AI to auto-detect bottles in this image?');
+    const engine = getAiEngine();
+    const engineLabel = engine === 'sam2' ? 'refine with SAM2' : 'auto-detect bottles';
+    const confirmed = confirm(`Use AI to ${engineLabel} in this image?`);
     if (!confirmed) return;
 
     try {
-        // This would call your YOLO detection endpoint
-        alert('AI auto-annotation will be implemented with your YOLO detection endpoint');
+        const imageData = state.images[state.currentImageIndex];
+        const datasetLabel = getDatasetLabelName();
+        const fallbackLabel = state.labels.find(l => l.id === state.selectedLabelId)?.name || 'product';
+        const labelName = datasetLabel || fallbackLabel;
+        const labelId = ensureLabel(labelName);
 
-        // Example implementation:
-        // const response = await fetch('/api/auto-annotate', {...});
-        // const detections = await response.json();
-        // detections.forEach(det => addAnnotation(det.bbox));
+        state.selectedLabelId = labelId;
+        renderLabels();
+
+        if (engine === 'sam2') {
+            if (state.selectedAnnotationId === null) {
+                alert('Select or draw a rough box first, then refine with SAM2.');
+                return;
+            }
+
+            const currentImageId = state.images[state.currentImageIndex].id;
+            const annotations = state.annotations[currentImageId] || [];
+            const selected = annotations[state.selectedAnnotationId];
+            if (!selected) {
+                alert('Selected annotation not found.');
+                return;
+            }
+
+            setSam2SpinnerVisible(true);
+            const toImageScaleX = state.currentImage.width / state.canvas.width;
+            const toImageScaleY = state.currentImage.height / state.canvas.height;
+
+            const response = await fetch('/api/segment/sam2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_path: imageData.path,
+                    box: {
+                        x: selected.bbox.x * toImageScaleX,
+                        y: selected.bbox.y * toImageScaleY,
+                        width: selected.bbox.width * toImageScaleX,
+                        height: selected.bbox.height * toImageScaleY
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                const errorPayload = await response.json().catch(() => null);
+                throw new Error(errorPayload?.error || errorPayload?.message || 'SAM2 refinement failed');
+            }
+
+            const payload = await response.json();
+            if (!payload.success || !payload.bbox) {
+                throw new Error(payload.error || payload.message || 'SAM2 refinement failed');
+            }
+
+            const toCanvasScaleX = state.canvas.width / state.currentImage.width;
+            const toCanvasScaleY = state.canvas.height / state.currentImage.height;
+            selected.bbox = {
+                x: payload.bbox.x * toCanvasScaleX,
+                y: payload.bbox.y * toCanvasScaleY,
+                width: payload.bbox.width * toCanvasScaleX,
+                height: payload.bbox.height * toCanvasScaleY
+            };
+            selected.confidence = payload.score ?? selected.confidence;
+            selected.createdBy = 'sam2';
+
+            saveToHistory();
+            renderAnnotationsList();
+            renderImageList();
+            render();
+            updateStats();
+            setSam2SpinnerVisible(false);
+            showSam2DoneTick();
+            return;
+        }
+
+        if (engine === 'gemini') {
+            alert('Gemini auto-annotation is not configured yet.');
+            return;
+        }
+
+        const response = await fetch('/api/auto-annotate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_path: imageData.path,
+                confidence: getAiConfidenceThreshold(),
+                label: labelName,
+                target_class: 'bottle'
+            })
+        });
+
+        if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            throw new Error(errorPayload?.error || errorPayload?.message || 'Auto-annotation failed');
+        }
+
+        const payload = await response.json();
+        if (!payload.success) {
+            throw new Error(payload.error || payload.message || 'Auto-annotation failed');
+        }
+
+        const detections = Array.isArray(payload.detections) ? payload.detections : [];
+        if (detections.length === 0) {
+            alert('No bottle detected at the current threshold.');
+            return;
+        }
+
+        const best = detections.reduce((top, det) => (
+            det.confidence > top.confidence ? det : top
+        ), detections[0]);
+
+        const scaleX = state.canvas.width / state.currentImage.width;
+        const scaleY = state.canvas.height / state.currentImage.height;
+        const bbox = {
+            x: best.x * scaleX,
+            y: best.y * scaleY,
+            width: best.width * scaleX,
+            height: best.height * scaleY
+        };
+
+        addAnnotation(bbox, {
+            labelId,
+            confidence: best.confidence,
+            createdBy: 'ai'
+        });
+
+        if (getSam2AutoRefineEnabled()) {
+            const currentImageId = state.images[state.currentImageIndex].id;
+            const annotations = state.annotations[currentImageId] || [];
+            const lastIndex = annotations.length - 1;
+            const created = annotations[lastIndex];
+            if (!created) return;
+
+            setSam2SpinnerVisible(true);
+            const toImageScaleX = state.currentImage.width / state.canvas.width;
+            const toImageScaleY = state.currentImage.height / state.canvas.height;
+
+            const refineResponse = await fetch('/api/segment/sam2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_path: imageData.path,
+                    box: {
+                        x: created.bbox.x * toImageScaleX,
+                        y: created.bbox.y * toImageScaleY,
+                        width: created.bbox.width * toImageScaleX,
+                        height: created.bbox.height * toImageScaleY
+                    }
+                })
+            });
+
+            if (!refineResponse.ok) {
+                const errorPayload = await refineResponse.json().catch(() => null);
+                throw new Error(errorPayload?.error || errorPayload?.message || 'SAM2 refinement failed');
+            }
+
+            const refinePayload = await refineResponse.json();
+            if (!refinePayload.success || !refinePayload.bbox) {
+                throw new Error(refinePayload.error || refinePayload.message || 'SAM2 refinement failed');
+            }
+
+            const toCanvasScaleX = state.canvas.width / state.currentImage.width;
+            const toCanvasScaleY = state.canvas.height / state.currentImage.height;
+            created.bbox = {
+                x: refinePayload.bbox.x * toCanvasScaleX,
+                y: refinePayload.bbox.y * toCanvasScaleY,
+                width: refinePayload.bbox.width * toCanvasScaleX,
+                height: refinePayload.bbox.height * toCanvasScaleY
+            };
+            created.confidence = refinePayload.score ?? created.confidence;
+            created.createdBy = 'sam2';
+
+            saveToHistory();
+            renderAnnotationsList();
+            renderImageList();
+            render();
+            updateStats();
+            setSam2SpinnerVisible(false);
+            showSam2DoneTick();
+        }
     } catch (error) {
+        setSam2SpinnerVisible(false);
         console.error('AI annotation error:', error);
         alert('AI annotation failed: ' + error.message);
     }

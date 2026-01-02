@@ -15,6 +15,7 @@ import { previewBackgroundForImage } from './background';
 import { preprocessForYOLO, generateRetailDataset, createYOLOAnnotations } from './preprocessing';
 import { runCompletePipeline, quickLiquorBottlePipeline } from './pipeline';
 import { DatasetVersionManager } from './versioning';
+import { logger, generateActionId } from './logger';
 import fs from 'fs';
 
 const app = Fastify({
@@ -183,6 +184,10 @@ app.post('/api/camera/reconnect', async () => {
 app.post('/api/camera/hard_reset', async () => {
   const ok = await camera.reconnect();
   return { success: ok, message: ok ? 'OK' : 'Failed to reopen' };
+});
+app.post('/api/camera/stop', async () => {
+  await camera.stop();
+  return { success: true, message: 'Camera stopped' };
 });
 app.get('/api/camera/health', async () => camera.getMetrics());
 
@@ -361,8 +366,12 @@ app.get('/api/file', async (req: any, reply: any) => {
   }
 
   // CRITICAL SECURITY: Prevent path traversal attacks
+  // Allow paths from external volumes (/Volumes/) or configured storage
   const storageBase = storage.currentPath || process.cwd();
-  if (!isPathSafe(p, storageBase)) {
+  const isExternalVolume = p.startsWith('/Volumes/');
+  const isInStorage = isPathSafe(p, storageBase);
+
+  if (!isExternalVolume && !isInStorage) {
     req.log.warn({ requestedPath: p, base: storageBase }, 'Path traversal attempt blocked');
     return reply.status(403).send({ error: 'Access denied' });
   }
@@ -379,8 +388,10 @@ app.get('/api/file', async (req: any, reply: any) => {
   }
 
   const map: any = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
-  reply.headers({ 'Content-Type': map[ext] || 'application/octet-stream' });
-  reply.send(fs.createReadStream(p));
+  reply.header('Content-Type', map[ext] || 'application/octet-stream');
+  reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+  reply.header('Access-Control-Allow-Origin', '*');
+  return reply.send(fs.createReadStream(p));
 });
 
 app.post<{ Body: {
@@ -795,9 +806,10 @@ app.post<{ Body: {
   model?: string;
   confidence?: number;
   label?: string;
+  target_class?: string;
 }}>('/api/auto-annotate', async (req: any) => {
   try {
-    const { image_path, model = 'yolov8-bottle', confidence = 0.5, label = 'bottle' } = req.body;
+    const { image_path, model = 'yolov8-bottle', confidence = 0.85, label = 'bottle', target_class = 'bottle' } = req.body;
 
     if (!image_path) {
       return { success: false, error: 'Image path required' };
@@ -808,7 +820,8 @@ app.post<{ Body: {
     const detections = await runBottleDetection(image_path, {
       model,
       confidence,
-      label
+      label,
+      targetClass: target_class
     });
 
     return {
@@ -818,6 +831,77 @@ app.post<{ Body: {
     };
   } catch (error: any) {
     return { success: false, error: error?.message || 'Auto-annotation failed' };
+  }
+});
+
+app.post<{ Body: {
+  image_path: string;
+  box: { x: number; y: number; width: number; height: number };
+  model?: string;
+  config?: string;
+  device?: string;
+} }>('/api/segment/sam2', async (req: any) => {
+  try {
+    const { image_path, box, model, config, device } = req.body || {};
+    if (!image_path || !box) {
+      return { success: false, error: 'image_path and box are required' };
+    }
+
+    const storageBase = storage.currentPath || process.cwd();
+    if (!isPathSafe(image_path, storageBase)) {
+      return { success: false, error: 'Access denied' };
+    }
+
+    if (!fs.existsSync(image_path)) {
+      return { success: false, error: 'Image file not found' };
+    }
+
+    const { runSam2Refine } = await import('./sam2_refine');
+    const result = await runSam2Refine(image_path, box, { model, config, device });
+    return { success: true, ...result };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'SAM2 refinement failed' };
+  }
+});
+
+app.post<{ Body: {
+  video_path: string;
+  init_box: { x: number; y: number; width: number; height: number };
+  model?: string;
+  config?: string;
+  device?: string;
+  frame_step?: number;
+  init_frame?: number;
+  include_masks?: boolean;
+} }>('/api/track/sam2', async (req: any) => {
+  try {
+    const { video_path, init_box, model, config, device, frame_step, init_frame, include_masks } = req.body || {};
+    if (!video_path || !init_box) {
+      return { success: false, error: 'video_path and init_box are required' };
+    }
+
+    const storageBase = storage.currentPath || process.cwd();
+    if (!isPathSafe(video_path, storageBase)) {
+      return { success: false, error: 'Access denied' };
+    }
+
+    if (!fs.existsSync(video_path)) {
+      return { success: false, error: 'Video file not found' };
+    }
+
+    const { runSam2Track } = await import('./sam2_refine');
+    const result = await runSam2Track(video_path, init_box, {
+      model,
+      config,
+      device,
+      frameStep: Number(frame_step ?? 1),
+      initFrame: Number(init_frame ?? 0),
+      includeMasks: Boolean(include_masks)
+    });
+
+    return { success: true, ...result };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'SAM2 tracking failed' };
   }
 });
 
@@ -903,7 +987,303 @@ app.post<{ Body: { path: string } }>('/api/list-directory', async (req: any, rep
 
 app.get('/', async (req: any, reply: any) => { reply.redirect('/image-collector.html'); });
 
+// ============================================================================
+// LOGGING API ENDPOINTS
+// ============================================================================
+
+// Receive client-side logs
+app.post<{ Body: any }>('/api/logs/client', async (req: any, reply: any) => {
+  const clientLog = req.body;
+
+  // Log client-side errors/warnings to backend with [CLIENT] prefix
+  const message = `[CLIENT] ${clientLog.message}`;
+  const context = {
+    sessionId: clientLog.sessionId,
+    url: clientLog.url,
+    userAgent: clientLog.userAgent,
+    ...clientLog.context,
+  };
+
+  switch (clientLog.level) {
+    case 'WARN':
+      logger.warn(message, context, clientLog.metadata);
+      break;
+    case 'ERROR':
+      logger.error(message, context, clientLog.metadata);
+      break;
+    case 'FATAL':
+      logger.fatal(message, context, clientLog.metadata);
+      break;
+    default:
+      logger.info(message, context, clientLog.metadata);
+  }
+
+  return reply.send({ success: true });
+});
+
+// Get recent logs
+app.get('/api/logs/recent', async (req: any, reply: any) => {
+  try {
+    const count = parseInt(req.query?.count || '100');
+    const logs = await logger.getRecentLogs(count);
+    return reply.send({ success: true, logs });
+  } catch (error: any) {
+    logger.error('Failed to fetch recent logs', {}, {}, error);
+    return reply.status(500).send({ error: 'Failed to fetch logs' });
+  }
+});
+
+// Get logs for specific date
+app.get('/api/logs/date/:date', async (req: any, reply: any) => {
+  try {
+    const { date } = req.params;
+    const logs = await logger.getLogsForDate(date);
+    return reply.send({ success: true, logs, date });
+  } catch (error: any) {
+    logger.error('Failed to fetch logs for date', { date: req.params.date }, {}, error);
+    return reply.status(500).send({ error: 'Failed to fetch logs' });
+  }
+});
+
+// Search logs
+app.post<{ Body: { query: string; date?: string } }>('/api/logs/search', async (req: any, reply: any) => {
+  try {
+    const { query, date } = req.body;
+    const logs = await logger.searchLogs(query, date);
+    return reply.send({ success: true, logs, query, date });
+  } catch (error: any) {
+    logger.error('Failed to search logs', {}, { query: req.body?.query }, error);
+    return reply.status(500).send({ error: 'Failed to search logs' });
+  }
+});
+
+// Get log directory path
+app.get('/api/logs/directory', async (req: any, reply: any) => {
+  const directory = logger.getLogDirectory();
+  return reply.send({ success: true, directory });
+});
+
+// Cleanup old logs
+app.post<{ Body: { daysToKeep?: number } }>('/api/logs/cleanup', async (req: any, reply: any) => {
+  try {
+    const daysToKeep = req.body?.daysToKeep || 30;
+    logger.cleanupOldLogs(daysToKeep);
+    logger.info('Log cleanup initiated', {}, { daysToKeep });
+    return reply.send({ success: true, message: `Cleaning up logs older than ${daysToKeep} days` });
+  } catch (error: any) {
+    logger.error('Failed to cleanup logs', {}, {}, error);
+    return reply.status(500).send({ error: 'Failed to cleanup logs' });
+  }
+});
+
+// ========================================
+// BATCH ANNOTATION API
+// ========================================
+
+import { batchAnnotationService } from './batch_annotation';
+
+app.post('/api/batch-annotate', async (req, reply) => {
+  const actionId = generateActionId();
+  logger.startAction(actionId, 'batchAnnotate', { endpoint: '/api/batch-annotate' });
+
+  try {
+    const { folderPath, engine, model, confidence, targetClass, labelName } = req.body as any;
+
+    if (!folderPath) {
+      return reply.status(400).send({ error: 'folderPath is required' });
+    }
+
+    if (!engine || (engine !== 'yolo' && engine !== 'sam2')) {
+      return reply.status(400).send({ error: 'engine must be "yolo" or "sam2"' });
+    }
+
+    const jobId = await batchAnnotationService.startBatchJob({
+      folderPath,
+      engine,
+      model,
+      confidence,
+      targetClass,
+      labelName
+    });
+
+    logger.endAction(actionId, 'batchAnnotate', true, {}, { jobId });
+
+    return reply.send({
+      success: true,
+      jobId,
+      message: 'Batch annotation job started'
+    });
+  } catch (error: any) {
+    logger.failAction(actionId, 'batchAnnotate', error);
+    return reply.status(500).send({
+      error: error.message || 'Failed to start batch annotation'
+    });
+  }
+});
+
+app.get('/api/batch-annotate/status/:jobId', async (req, reply) => {
+  try {
+    const { jobId } = req.params as any;
+
+    const progress = batchAnnotationService.getJobProgress(jobId);
+
+    if (!progress) {
+      return reply.status(404).send({ error: 'Job not found' });
+    }
+
+    return reply.send({
+      success: true,
+      progress
+    });
+  } catch (error: any) {
+    logger.error('Failed to get batch job status', {}, {}, error);
+    return reply.status(500).send({
+      error: 'Failed to get job status'
+    });
+  }
+});
+
+app.get('/api/batch-annotate/jobs', async (req, reply) => {
+  try {
+    const jobs = batchAnnotationService.getAllJobs();
+
+    return reply.send({
+      success: true,
+      jobs
+    });
+  } catch (error: any) {
+    logger.error('Failed to get batch jobs', {}, {}, error);
+    return reply.status(500).send({
+      error: 'Failed to get jobs'
+    });
+  }
+});
+
+app.post('/api/batch-annotate/cancel/:jobId', async (req, reply) => {
+  try {
+    const { jobId } = req.params as any;
+
+    const cancelled = batchAnnotationService.cancelJob(jobId);
+
+    if (!cancelled) {
+      return reply.status(404).send({ error: 'Job not found or not running' });
+    }
+
+    logger.info('Batch job cancelled', { jobId });
+
+    return reply.send({
+      success: true,
+      message: 'Job cancelled'
+    });
+  } catch (error: any) {
+    logger.error('Failed to cancel batch job', {}, {}, error);
+    return reply.status(500).send({
+      error: 'Failed to cancel job'
+    });
+  }
+});
+
+app.delete('/api/batch-annotate/job/:jobId', async (req, reply) => {
+  try {
+    const { jobId } = req.params as any;
+
+    const deleted = batchAnnotationService.deleteJob(jobId);
+
+    if (!deleted) {
+      return reply.status(404).send({ error: 'Job not found' });
+    }
+
+    return reply.send({
+      success: true,
+      message: 'Job deleted'
+    });
+  } catch (error: any) {
+    logger.error('Failed to delete batch job', {}, {}, error);
+    return reply.status(500).send({
+      error: 'Failed to delete job'
+    });
+  }
+});
+
+app.post('/api/batch-annotate/save', async (req, reply) => {
+  const actionId = generateActionId();
+  logger.startAction(actionId, 'saveBatchAnnotations', { endpoint: '/api/batch-annotate/save' });
+
+  try {
+    const { jobId, annotations, outputFolder } = req.body as any;
+
+    if (!jobId || !annotations || !outputFolder) {
+      return reply.status(400).send({
+        error: 'jobId, annotations, and outputFolder are required'
+      });
+    }
+
+    // Create output folder if it doesn't exist
+    const fs = require('fs');
+    const path = require('path');
+
+    if (!fs.existsSync(outputFolder)) {
+      fs.mkdirSync(outputFolder, { recursive: true });
+    }
+
+    // Save annotations in YOLO format
+    let savedCount = 0;
+
+    for (const result of annotations) {
+      if (result.annotations && result.annotations.length > 0) {
+        const imageName = path.basename(result.imagePath, path.extname(result.imagePath));
+        const labelPath = path.join(outputFolder, `${imageName}.txt`);
+
+        const lines = result.annotations.map((ann: any) => {
+          const { bbox, labelName, polygon } = ann;
+
+          // For now, use class ID 0 (can be enhanced later with label mapping)
+          const classId = 0;
+
+          if (polygon && polygon.length > 0) {
+            // Polygon format: class_id x1 y1 x2 y2 x3 y3 ...
+            const points = polygon.map((p: any) => `${p.x} ${p.y}`).join(' ');
+            return `${classId} ${points}`;
+          } else {
+            // Bbox format: class_id x_center y_center width height (normalized)
+            // Note: These should already be normalized, but we'll assume they're in pixel coordinates
+            // and need image dimensions for normalization (will be handled by frontend)
+            const x_center = bbox.x + bbox.width / 2;
+            const y_center = bbox.y + bbox.height / 2;
+            return `${classId} ${x_center} ${y_center} ${bbox.width} ${bbox.height}`;
+          }
+        });
+
+        fs.writeFileSync(labelPath, lines.join('\n'));
+        savedCount++;
+      }
+    }
+
+    logger.endAction(actionId, 'saveBatchAnnotations', true, { jobId }, {
+      savedCount,
+      outputFolder
+    });
+
+    return reply.send({
+      success: true,
+      message: `Saved ${savedCount} annotation files to ${outputFolder}`,
+      savedCount
+    });
+  } catch (error: any) {
+    logger.failAction(actionId, 'saveBatchAnnotations', error);
+    return reply.status(500).send({
+      error: error.message || 'Failed to save annotations'
+    });
+  }
+});
+
 async function start() {
+  // Initialize logger
+  logger.info('Starting Product Capture 360 server', {}, {
+    nodeVersion: process.version,
+    platform: process.platform,
+    env: process.env.NODE_ENV || 'development',
+  });
   try {
     // Kill any existing server processes before starting
     try {

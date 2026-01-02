@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Batch Annotation - Product Capture 360</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 32px;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #718096;
+            font-size: 16px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            font-size: 24px;
+            color: #2d3748;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .progress-container {
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e2e8f0;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .progress-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .progress-stat {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .progress-stat .label {
+            font-size: 12px;
+            color: #718096;
+            margin-bottom: 5px;
+        }
+
+        .progress-stat .value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .result-card {
+            background: #f7fafc;
+            border-radius: 10px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .result-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+
+        .result-card.success {
+            border-left: 4px solid #48bb78;
+        }
+
+        .result-card.failed {
+            border-left: 4px solid #f56565;
+        }
+
+        .result-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: #e2e8f0;
+        }
+
+        .result-info {
+            padding: 15px;
+        }
+
+        .result-filename {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .result-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #718096;
+        }
+
+        .annotation-badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        .status-badge.pending {
+            background: #fbd38d;
+            color: #7c2d12;
+        }
+
+        .status-badge.running {
+            background: #90cdf4;
+            color: #1a365d;
+        }
+
+        .status-badge.completed {
+            background: #9ae6b4;
+            color: #22543d;
+        }
+
+        .status-badge.failed {
+            background: #feb2b2;
+            color: #742a2a;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #718096;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .job-list {
+            margin-top: 20px;
+        }
+
+        .job-item {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .job-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: #718096;
+        }
+
+        .job-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #e2e8f0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .help-text {
+            font-size: 13px;
+            color: #718096;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Batch Annotation</h1>
+            <p>Automatically annotate entire folders with YOLO11 or SAM2</p>
+        </div>
+
+        <!-- Configuration Card -->
+        <div class="card">
+            <h2>⚙️ Configuration</h2>
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Folder Path</label>
+                    <input type="text" id="folderPath" placeholder="/path/to/images">
+                    <p class="help-text">Path to folder containing images to annotate</p>
+                </div>
+
+                <div class="form-group">
+                    <label>AI Engine</label>
+                    <select id="engine">
+                        <option value="yolo">YOLO11 (Fast detection)</option>
+                        <option value="sam2">SAM2 (Precise segmentation)</option>
+                    </select>
+                    <p class="help-text">YOLO for speed, SAM2 for accuracy</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Model</label>
+                    <select id="model">
+                        <option value="yolov8n">YOLOv8 Nano (Fastest)</option>
+                        <option value="yolov8s">YOLOv8 Small</option>
+                        <option value="yolov8m">YOLOv8 Medium</option>
+                        <option value="yolo11n">YOLO11 Nano</option>
+                        <option value="yolo11s">YOLO11 Small</option>
+                    </select>
+                    <p class="help-text">Larger models are more accurate but slower</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Confidence Threshold</label>
+                    <input type="number" id="confidence" value="0.5" min="0" max="1" step="0.05">
+                    <p class="help-text">Minimum confidence (0.0 - 1.0)</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Target Class</label>
+                    <input type="text" id="targetClass" value="bottle" placeholder="e.g., bottle, person">
+                    <p class="help-text">Object class to detect</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Label Name</label>
+                    <input type="text" id="labelName" value="Product" placeholder="e.g., Product">
+                    <p class="help-text">Name for annotations in dataset</p>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px; display: flex; gap: 15px;">
+                <button class="btn btn-primary" id="startBtn" onclick="startBatchAnnotation()">
+                    🚀 Start Batch Annotation
+                </button>
+                <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'">
+                    📝 Open Manual Annotator
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Card -->
+        <div class="card progress-container" id="progressCard">
+            <h2>
+                <span class="loading-spinner"></span>
+                Processing Images
+            </h2>
+
+            <div class="progress-bar">
+                <div class="progress-bar-fill" id="progressBarFill">0%</div>
+            </div>
+
+            <div class="progress-info">
+                <div class="progress-stat">
+                    <div class="label">Status</div>
+                    <div class="value" id="jobStatus">Pending</div>
+                </div>
+                <div class="progress-stat">
+                    <div class="label">Progress</div>
+                    <div class="value" id="jobProgress">0 / 0</div>
+                </div>
+                <div class="progress-stat">
+                    <div class="label">Current Image</div>
+                    <div class="value" id="currentImage">-</div>
+                </div>
+                <div class="progress-stat">
+                    <div class="label">Elapsed Time</div>
+                    <div class="value" id="elapsedTime">0s</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 15px;">
+                <button class="btn btn-danger" id="cancelBtn" onclick="cancelJob()">
+                    ⏹ Cancel Job
+                </button>
+            </div>
+        </div>
+
+        <!-- Results Card -->
+        <div class="card" id="resultsCard" style="display: none;">
+            <h2>
+                📊 Results
+                <span class="status-badge completed" id="resultsStatus">Completed</span>
+            </h2>
+
+            <div style="margin-bottom: 20px; display: flex; gap: 15px;">
+                <button class="btn btn-primary" onclick="reviewAnnotations()">
+                    👁️ Review & Edit in Annotator
+                </button>
+                <button class="btn btn-secondary" onclick="exportAnnotations()">
+                    💾 Export YOLO Format
+                </button>
+                <button class="btn btn-secondary" onclick="startNewJob()">
+                    🔄 Start New Job
+                </button>
+            </div>
+
+            <div class="results-grid" id="resultsGrid">
+                <!-- Results will be populated here -->
+            </div>
+        </div>
+
+        <!-- Recent Jobs Card -->
+        <div class="card">
+            <h2>📜 Recent Jobs</h2>
+            <div class="job-list" id="jobList">
+                <div class="empty-state">
+                    <p>No batch annotation jobs yet</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/logger.js"></script>
+    <script>
+        let currentJobId = null;
+        let pollInterval = null;
+
+        // Start batch annotation
+        async function startBatchAnnotation() {
+            const actionId = window.appLogger?.startAction('startBatchAnnotation');
+
+            const folderPath = document.getElementById('folderPath').value;
+            const engine = document.getElementById('engine').value;
+            const model = document.getElementById('model').value;
+            const confidence = parseFloat(document.getElementById('confidence').value);
+            const targetClass = document.getElementById('targetClass').value;
+            const labelName = document.getElementById('labelName').value;
+
+            if (!folderPath) {
+                alert('Please enter a folder path');
+                if (actionId) window.appLogger.failAction(actionId, new Error('No folder path'));
+                return;
+            }
+
+            window.appLogger?.info('Starting batch annotation', {
+                folderPath,
+                engine,
+                model,
+                confidence,
+                targetClass
+            });
+
+            try {
+                const response = await fetch('/api/batch-annotate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        folderPath,
+                        engine,
+                        model,
+                        confidence,
+                        targetClass,
+                        labelName
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to start batch annotation');
+                }
+
+                currentJobId = data.jobId;
+
+                window.appLogger?.info('Batch job started', { jobId: currentJobId });
+                if (actionId) window.appLogger.endAction(actionId, true, { jobId: currentJobId });
+
+                // Show progress card
+                document.getElementById('progressCard').classList.add('active');
+                document.getElementById('resultsCard').style.display = 'none';
+                document.getElementById('startBtn').disabled = true;
+
+                // Start polling for progress
+                startProgressPolling();
+            } catch (error) {
+                window.appLogger?.error('Failed to start batch annotation', {}, { error: error.message });
+                if (actionId) window.appLogger.failAction(actionId, error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Poll for job progress
+        function startProgressPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+
+            pollInterval = setInterval(async () => {
+                if (!currentJobId) return;
+
+                try {
+                    const response = await fetch(`/api/batch-annotate/status/${currentJobId}`);
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Failed to get job status');
+                    }
+
+                    updateProgress(data.progress);
+
+                    // Stop polling if job is complete or failed
+                    if (data.progress.status === 'completed' || data.progress.status === 'failed') {
+                        clearInterval(pollInterval);
+                        showResults(data.progress);
+                    }
+                } catch (error) {
+                    window.appLogger?.error('Failed to poll job status', { jobId: currentJobId }, { error: error.message });
+                }
+            }, 1000); // Poll every second
+        }
+
+        // Update progress display
+        function updateProgress(progress) {
+            const percent = progress.totalImages > 0
+                ? Math.round((progress.processedImages / progress.totalImages) * 100)
+                : 0;
+
+            document.getElementById('progressBarFill').style.width = `${percent}%`;
+            document.getElementById('progressBarFill').textContent = `${percent}%`;
+            document.getElementById('jobStatus').textContent = progress.status.toUpperCase();
+            document.getElementById('jobProgress').textContent = `${progress.processedImages} / ${progress.totalImages}`;
+            document.getElementById('currentImage').textContent = progress.currentImage || '-';
+
+            const elapsed = Math.round((Date.now() - progress.startTime) / 1000);
+            document.getElementById('elapsedTime').textContent = `${elapsed}s`;
+        }
+
+        // Show results
+        function showResults(progress) {
+            window.appLogger?.info('Batch job completed', {
+                jobId: progress.jobId,
+                totalImages: progress.totalImages,
+                duration: progress.endTime - progress.startTime
+            });
+
+            document.getElementById('progressCard').classList.remove('active');
+            document.getElementById('resultsCard').style.display = 'block';
+            document.getElementById('startBtn').disabled = false;
+
+            const statusBadge = document.getElementById('resultsStatus');
+            statusBadge.className = `status-badge ${progress.status}`;
+            statusBadge.textContent = progress.status.toUpperCase();
+
+            // Render results grid
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '';
+
+            if (progress.results.length === 0) {
+                grid.innerHTML = '<div class="empty-state"><p>No results found</p></div>';
+                return;
+            }
+
+            progress.results.forEach(result => {
+                const card = document.createElement('div');
+                card.className = `result-card ${result.status}`;
+                card.onclick = () => openInAnnotator(result.imagePath);
+
+                card.innerHTML = `
+                    <img class="result-image" src="/api/file?path=${encodeURIComponent(result.imagePath)}"
+                         alt="${result.filename}" onerror="this.style.display='none'">
+                    <div class="result-info">
+                        <div class="result-filename" title="${result.filename}">${result.filename}</div>
+                        <div class="result-meta">
+                            <span class="annotation-badge">${result.annotations.length} boxes</span>
+                            <span>${result.status === 'success' ? '✓' : '✗'}</span>
+                        </div>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+
+            // Load recent jobs
+            loadRecentJobs();
+        }
+
+        // Open image in annotator
+        function openInAnnotator(imagePath) {
+            const folderPath = imagePath.substring(0, imagePath.lastIndexOf('/'));
+            window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}`;
+        }
+
+        // Review annotations
+        function reviewAnnotations() {
+            const folderPath = document.getElementById('folderPath').value;
+            window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}`;
+        }
+
+        // Export annotations
+        async function exportAnnotations() {
+            const actionId = window.appLogger?.startAction('exportBatchAnnotations');
+
+            if (!currentJobId) {
+                alert('No job to export');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/batch-annotate/status/${currentJobId}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to get job data');
+                }
+
+                const folderPath = document.getElementById('folderPath').value;
+                const outputFolder = folderPath + '/labels';
+
+                const saveResponse = await fetch('/api/batch-annotate/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jobId: currentJobId,
+                        annotations: data.progress.results,
+                        outputFolder
+                    })
+                });
+
+                const saveData = await saveResponse.json();
+
+                if (!saveResponse.ok) {
+                    throw new Error(saveData.error || 'Failed to save annotations');
+                }
+
+                window.appLogger?.info('Annotations exported', {
+                    jobId: currentJobId,
+                    outputFolder,
+                    savedCount: saveData.savedCount
+                });
+
+                if (actionId) window.appLogger.endAction(actionId, true, {
+                    savedCount: saveData.savedCount
+                });
+
+                alert(`Exported ${saveData.savedCount} annotations to ${outputFolder}`);
+            } catch (error) {
+                window.appLogger?.error('Failed to export annotations', {}, { error: error.message });
+                if (actionId) window.appLogger.failAction(actionId, error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Cancel job
+        async function cancelJob() {
+            if (!currentJobId) return;
+
+            if (!confirm('Are you sure you want to cancel this job?')) return;
+
+            try {
+                const response = await fetch(`/api/batch-annotate/cancel/${currentJobId}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to cancel job');
+                }
+
+                window.appLogger?.warn('Batch job cancelled', { jobId: currentJobId });
+
+                clearInterval(pollInterval);
+                document.getElementById('progressCard').classList.remove('active');
+                document.getElementById('startBtn').disabled = false;
+                currentJobId = null;
+            } catch (error) {
+                window.appLogger?.error('Failed to cancel job', {}, { error: error.message });
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Start new job
+        function startNewJob() {
+            document.getElementById('resultsCard').style.display = 'none';
+            currentJobId = null;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Load recent jobs
+        async function loadRecentJobs() {
+            try {
+                const response = await fetch('/api/batch-annotate/jobs');
+                const data = await response.json();
+
+                if (!response.ok) return;
+
+                const jobList = document.getElementById('jobList');
+                jobList.innerHTML = '';
+
+                if (data.jobs.length === 0) {
+                    jobList.innerHTML = '<div class="empty-state"><p>No batch annotation jobs yet</p></div>';
+                    return;
+                }
+
+                data.jobs.slice().reverse().forEach(job => {
+                    const jobItem = document.createElement('div');
+                    jobItem.className = 'job-item';
+
+                    const elapsed = job.endTime
+                        ? Math.round((job.endTime - job.startTime) / 1000)
+                        : Math.round((Date.now() - job.startTime) / 1000);
+
+                    jobItem.innerHTML = `
+                        <div class="job-header">
+                            <div>
+                                <span class="status-badge ${job.status}">${job.status.toUpperCase()}</span>
+                                <span class="job-id">${job.jobId}</span>
+                            </div>
+                            <div class="job-actions">
+                                <button class="btn btn-secondary" onclick="viewJobResults('${job.jobId}')">
+                                    View Results
+                                </button>
+                            </div>
+                        </div>
+                        <div style="font-size: 13px; color: #718096;">
+                            ${job.processedImages} / ${job.totalImages} images • ${elapsed}s elapsed
+                        </div>
+                    `;
+
+                    jobList.appendChild(jobItem);
+                });
+            } catch (error) {
+                window.appLogger?.error('Failed to load recent jobs', {}, { error: error.message });
+            }
+        }
+
+        // View job results
+        async function viewJobResults(jobId) {
+            try {
+                const response = await fetch(`/api/batch-annotate/status/${jobId}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to get job');
+                }
+
+                currentJobId = jobId;
+                showResults(data.progress);
+                window.scrollTo({ top: document.getElementById('resultsCard').offsetTop - 20, behavior: 'smooth' });
+            } catch (error) {
+                window.appLogger?.error('Failed to view job results', { jobId }, { error: error.message });
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            window.appLogger?.info('Batch annotator loaded');
+            loadRecentJobs();
+
+            // Load folder path from URL params if available
+            const params = new URLSearchParams(window.location.search);
+            const path = params.get('path');
+            if (path) {
+                document.getElementById('folderPath').value = path;
+            }
+        });
+    </script>
+</body>
+</html>

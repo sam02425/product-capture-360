@@ -214,6 +214,30 @@ export class CameraManager {
     return copy;
   };
 
+  /**
+   * Wait for the NEXT camera frame (different from current one)
+   * Returns a fresh frame, ensuring video-like smoothness with no duplicates
+   */
+  waitForNextFrame = async (timeoutMs: number = 100): Promise<Buffer | undefined> => {
+    const currentTimestamp = this.lastFrameTs;
+    const startTime = Date.now();
+
+    // Wait for timestamp to change (new frame arrived)
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.lastFrameTs > currentTimestamp && this.latestFrame) {
+        // New frame arrived! Return a copy
+        const copy = Buffer.allocUnsafe(this.latestFrame.length);
+        this.latestFrame.copy(copy);
+        return copy;
+      }
+      // Small delay to avoid busy-waiting
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
+    // Timeout - return current frame if available
+    return this.getLatestJPEG();
+  };
+
   getLastError = (): string | null => this.lastErrorMsg;
 
   private tryStart = async (args: string[]): Promise<boolean> => {
