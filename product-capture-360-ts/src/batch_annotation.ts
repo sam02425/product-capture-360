@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { logger, generateActionId } from './logger';
 import { runBottleDetection, Detection } from './bottle_detection';
+import { getImageSize } from './image_utils';
 import { runSam2Refine } from './sam2_refine';
 
 /**
@@ -81,7 +82,7 @@ class BatchAnnotationService {
       const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.webp'];
       const imageFiles = files.filter(f => {
         const ext = path.extname(f).toLowerCase();
-        return imageExtensions.includes(ext);
+        return imageExtensions.includes(ext) && !f.startsWith('._');
       });
 
       if (imageFiles.length === 0) {
@@ -239,15 +240,30 @@ class BatchAnnotationService {
     const confidence = options.confidence || 0.5;
     const targetClass = options.targetClass || 'bottle';
 
-    const detections = await runBottleDetection(imagePath, {
-      model,
-      confidence,
-      targetClass,
-      label: options.labelName || targetClass
-    });
+    let detections: Detection[] = [];
+    try {
+      detections = await runBottleDetection(imagePath, {
+        model,
+        confidence,
+        targetClass,
+        label: options.labelName || targetClass
+      });
+    } catch (error) {
+      logger.warn('YOLO detection failed, using fallback box', {
+        imagePath,
+        model,
+        targetClass
+      }, { error: (error as Error).message });
+      return this.createFallbackAnnotation(imagePath, options);
+    }
 
     if (!detections || detections.length === 0) {
-      return [];
+      logger.warn('YOLO returned no detections, using fallback box', {
+        imagePath,
+        model,
+        targetClass
+      });
+      return this.createFallbackAnnotation(imagePath, options);
     }
 
     // Convert to annotation format
@@ -261,6 +277,34 @@ class BatchAnnotationService {
       labelName: options.labelName || d.class || targetClass,
       confidence: d.confidence
     }));
+  }
+
+  private createFallbackAnnotation(
+    imagePath: string,
+    options: BatchJobOptions
+  ): Annotation[] {
+    try {
+      const { width, height } = getImageSize(imagePath);
+      const boxWidth = Math.round(width * 0.45);
+      const boxHeight = Math.round(height * 0.7);
+      const x = Math.round((width - boxWidth) / 2);
+      const y = Math.round((height - boxHeight) / 2);
+      const labelName = options.labelName || options.targetClass || 'Object';
+
+      return [{
+        bbox: {
+          x,
+          y,
+          width: Math.max(1, boxWidth),
+          height: Math.max(1, boxHeight)
+        },
+        labelName,
+        confidence: 0.01
+      }];
+    } catch (error) {
+      logger.error('Fallback bbox failed', { imagePath }, { error: (error as Error).message });
+      return [];
+    }
   }
 
   /**

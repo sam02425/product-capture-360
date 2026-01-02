@@ -7,6 +7,9 @@ def detect_bottles(image_path, model_name='yolov8n', confidence=0.85, label='bot
     """
     Detect bottles in image using YOLO
     """
+    # Skip macOS metadata files
+    if os.path.basename(image_path).startswith('._'):
+        return []
     # Load pre-trained YOLO model
     model = YOLO(f'{model_name}.pt')
 
@@ -16,6 +19,13 @@ def detect_bottles(image_path, model_name='yolov8n', confidence=0.85, label='bot
     detections = []
 
     target = (target_class or '').strip().lower()
+    if target in ('all', '*'):
+        target = ''
+
+    model_classes = {str(name).lower() for name in model.names.values()}
+    if target and target not in model_classes:
+        # Unknown class name from UI; skip filtering to avoid empty results.
+        target = ''
     for result in results:
         boxes = result.boxes
         for box in boxes:

@@ -1121,6 +1121,28 @@ app.post('/api/batch-annotate', async (req, reply) => {
   }
 });
 
+app.get('/api/yolo/check', async (req, reply) => {
+  try {
+    const { execFile } = await import('child_process');
+    const scriptPath = path.join(process.cwd(), 'scripts', 'yolo_health_check.py');
+
+    const output = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile('python3', [scriptPath], { timeout: 15000 }, (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
+    });
+
+    const payload = JSON.parse(output.stdout || '{}');
+    return reply.send(payload);
+  } catch (error: any) {
+    return reply.status(500).send({ ok: false, error: error.message || 'YOLO check failed' });
+  }
+});
+
 app.get('/api/batch-annotate/status/:jobId', async (req, reply) => {
   try {
     const { jobId } = req.params as any;

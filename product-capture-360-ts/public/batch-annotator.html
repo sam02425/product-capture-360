@@ -213,6 +213,10 @@
             box-shadow: 0 10px 20px rgba(0,0,0,0.1);
             border-color: #667eea;
         }
+        .result-card.active {
+            border-color: #2b6cb0;
+            box-shadow: 0 12px 24px rgba(43,108,176,0.2);
+        }
 
         .result-card.success {
             border-left: 4px solid #48bb78;
@@ -220,6 +224,15 @@
 
         .result-card.failed {
             border-left: 4px solid #f56565;
+        }
+        .result-card.review-approved {
+            border-left: 4px solid #10b981;
+        }
+        .result-card.review-rejected {
+            border-left: 4px solid #ef4444;
+        }
+        .result-card.review-unchecked {
+            border-left: 4px solid #f59e0b;
         }
 
         .result-image {
@@ -285,6 +298,18 @@
             background: #feb2b2;
             color: #742a2a;
         }
+        .status-badge.approved {
+            background: #9ae6b4;
+            color: #22543d;
+        }
+        .status-badge.rejected {
+            background: #feb2b2;
+            color: #742a2a;
+        }
+        .status-badge.unchecked {
+            background: #fbd38d;
+            color: #7c2d12;
+        }
 
         .empty-state {
             text-align: center;
@@ -348,6 +373,91 @@
             color: #718096;
             margin-top: 5px;
         }
+        .output-paths {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            color: #4a5568;
+            display: grid;
+            gap: 6px;
+        }
+        .output-paths span {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #2d3748;
+            word-break: break-all;
+        }
+        .live-preview {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 15px;
+            align-items: center;
+        }
+        .live-preview-media {
+            position: relative;
+            width: 100%;
+            height: 160px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #e2e8f0;
+        }
+        .live-preview-media img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .live-preview-media canvas {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+        .review-panel {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 20px;
+            align-items: start;
+            margin-top: 20px;
+        }
+        .review-panel img {
+            width: 100%;
+            height: 260px;
+            object-fit: cover;
+            border-radius: 12px;
+            background: #e2e8f0;
+        }
+        .review-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .review-meta {
+            display: grid;
+            gap: 8px;
+            color: #4a5568;
+            font-size: 14px;
+        }
+        .review-counts {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .review-count {
+            background: #f7fafc;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        @media (max-width: 900px) {
+            .review-panel {
+                grid-template-columns: 1fr;
+            }
+            .live-preview {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -406,15 +516,32 @@
                     <input type="text" id="labelName" value="Product" placeholder="e.g., Product">
                     <p class="help-text">Name for annotations in dataset</p>
                 </div>
+
+                <div class="form-group">
+                    <label>Output Folders</label>
+                    <div class="output-paths">
+                        <div>Approved: <span id="approvedOutput">-</span></div>
+                        <div>Rejected: <span id="rejectedOutput">-</span></div>
+                        <div>Unchecked: <span id="uncheckedOutput">-</span></div>
+                    </div>
+                    <p class="help-text">Approved outputs are versioned, rejected stay separate for later edits.</p>
+                </div>
             </div>
 
             <div style="margin-top: 30px; display: flex; gap: 15px;">
                 <button class="btn btn-primary" id="startBtn" onclick="startBatchAnnotation()">
                     🚀 Start Batch Annotation
                 </button>
+                <button class="btn btn-secondary" onclick="runYoloCheck()">
+                    🧪 Run YOLO Check
+                </button>
                 <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'">
                     📝 Open Manual Annotator
                 </button>
+            </div>
+            <div class="output-paths" id="yoloCheckBox" style="margin-top: 16px; display: none;">
+                <div><strong>YOLO Check</strong></div>
+                <div id="yoloCheckText">Checking...</div>
             </div>
         </div>
 
@@ -453,6 +580,21 @@
                     ⏹ Cancel Job
                 </button>
             </div>
+
+            <div class="live-preview">
+                <div class="live-preview-media">
+                    <img id="livePreviewImage" src="" alt="Live preview">
+                    <canvas id="livePreviewCanvas"></canvas>
+                </div>
+                <div>
+                    <div style="font-weight: 600; color: #2d3748; margin-bottom: 6px;">Live annotation feed</div>
+                    <div id="livePreviewLabel" style="color: #718096;">Waiting for images...</div>
+                </div>
+            </div>
+            <div class="output-paths" id="diagnosticsBox" style="margin-top: 16px;">
+                <div><strong>Diagnostics</strong></div>
+                <div id="diagnosticsText">Waiting for job data...</div>
+            </div>
         </div>
 
         <!-- Results Card -->
@@ -461,17 +603,49 @@
                 📊 Results
                 <span class="status-badge completed" id="resultsStatus">Completed</span>
             </h2>
+            <div style="color: #4a5568; font-size: 14px; margin-bottom: 12px;" id="batchMeta"></div>
+            <div class="output-paths" id="resultsDiagnostics" style="margin-bottom: 12px;">
+                <div><strong>Diagnostics</strong></div>
+                <div id="resultsDiagnosticsText">No diagnostics yet.</div>
+            </div>
 
             <div style="margin-bottom: 20px; display: flex; gap: 15px;">
                 <button class="btn btn-primary" onclick="reviewAnnotations()">
                     👁️ Review & Edit in Annotator
                 </button>
                 <button class="btn btn-secondary" onclick="exportAnnotations()">
-                    💾 Export YOLO Format
+                    💾 Export All (YOLO)
+                </button>
+                <button class="btn btn-primary" onclick="saveReviewedResults('approved')">
+                    ✅ Save Approved to Dataset
+                </button>
+                <button class="btn btn-secondary" onclick="saveReviewedResults('rejected')">
+                    🚫 Save Rejected Set
                 </button>
                 <button class="btn btn-secondary" onclick="startNewJob()">
                     🔄 Start New Job
                 </button>
+            </div>
+
+            <div class="review-counts" id="reviewCounts"></div>
+
+            <div class="review-panel" id="reviewPanel" style="display: none;">
+                <img id="reviewImage" src="" alt="Selected image">
+                <div>
+                    <div class="review-meta">
+                        <div><strong>File:</strong> <span id="reviewFilename">-</span></div>
+                        <div><strong>Annotations:</strong> <span id="reviewAnnCount">0</span></div>
+                        <div><strong>Status:</strong> <span class="status-badge unchecked" id="reviewStatusBadge">UNCHECKED</span></div>
+                    </div>
+                    <div class="review-actions" style="margin-top: 16px;">
+                        <button class="btn btn-secondary" onclick="selectPreviousResult()">⬅️ Previous</button>
+                        <button class="btn btn-secondary" onclick="selectNextResult()">Next ➡️</button>
+                        <button class="btn btn-primary" onclick="setSelectedReviewStatus('approved')">Approve</button>
+                        <button class="btn btn-danger" onclick="setSelectedReviewStatus('rejected')">Reject</button>
+                        <button class="btn btn-secondary" onclick="setSelectedReviewStatus('unchecked')">Unchecked</button>
+                        <button class="btn btn-secondary" onclick="openSelectedInAnnotator()">📝 Open in Annotator</button>
+                    </div>
+                </div>
             </div>
 
             <div class="results-grid" id="resultsGrid">
@@ -494,12 +668,252 @@
     <script>
         let currentJobId = null;
         let pollInterval = null;
+        let currentResults = [];
+        let selectedResultIndex = 0;
+        let activeFolderPath = '';
+        let currentJobConfig = null;
+        let reviewState = {};
+        let lastPreviewPath = '';
+        let lastPreviewStatus = 'idle';
+        let lastPreviewAnnotations = [];
+
+        const REVIEW_STATE_PREFIX = 'batchReviewState_';
+        const JOB_CONFIG_PREFIX = 'batchJobConfig_';
+        const REVIEW_DATA_PREFIX = 'batchReviewData_';
+        const BATCH_NUMBER_COUNTER = 'batchNumberCounter';
+        const BATCH_NUMBER_MAP = 'batchNumberMap';
+        const LAST_BATCH_JOB_ID = 'lastBatchJobId';
+
+        function joinPath(base, file) {
+            if (!base) return file;
+            return base.endsWith('/') ? `${base}${file}` : `${base}/${file}`;
+        }
+
+        function normalizeFolderPath(rawPath) {
+            if (!rawPath) return '';
+            let cleaned = rawPath.trim().replace(/\\/g, '/');
+            if (cleaned.startsWith('./')) {
+                cleaned = cleaned.slice(1);
+            }
+            return cleaned;
+        }
+
+        function getFolderFromImagePath(imagePath) {
+            if (!imagePath) return '';
+            const lastSlash = imagePath.lastIndexOf('/');
+            return lastSlash === -1 ? '' : imagePath.slice(0, lastSlash);
+        }
+
+        function updateOutputPaths() {
+            const folderPath = normalizeFolderPath(document.getElementById('folderPath').value);
+            const approved = folderPath ? joinPath(folderPath, 'labels_approved') : '-';
+            const rejected = folderPath ? joinPath(folderPath, 'labels_rejected') : '-';
+            const unchecked = folderPath ? joinPath(folderPath, 'labels_unchecked') : '-';
+            document.getElementById('approvedOutput').textContent = approved;
+            document.getElementById('rejectedOutput').textContent = rejected;
+            document.getElementById('uncheckedOutput').textContent = unchecked;
+        }
+
+        function loadBatchNumberMap() {
+            const raw = localStorage.getItem(BATCH_NUMBER_MAP);
+            return raw ? JSON.parse(raw) : {};
+        }
+
+        function saveBatchNumberMap(map) {
+            localStorage.setItem(BATCH_NUMBER_MAP, JSON.stringify(map));
+        }
+
+        function getBatchNumber(jobId) {
+            const map = loadBatchNumberMap();
+            return map[jobId];
+        }
+
+        function assignBatchNumber(jobId) {
+            const map = loadBatchNumberMap();
+            if (map[jobId]) return map[jobId];
+            const current = parseInt(localStorage.getItem(BATCH_NUMBER_COUNTER) || '0', 10) + 1;
+            map[jobId] = current;
+            localStorage.setItem(BATCH_NUMBER_COUNTER, String(current));
+            saveBatchNumberMap(map);
+            return current;
+        }
+
+        function storeReviewData(jobId) {
+            if (!currentResults.length) return;
+            const payload = {
+                jobId,
+                folderPath: activeFolderPath,
+                labelName: currentJobConfig?.labelName || document.getElementById('labelName').value,
+                results: currentResults
+            };
+            localStorage.setItem(`${REVIEW_DATA_PREFIX}${jobId}`, JSON.stringify(payload));
+        }
+
+        function storeJobConfig(jobId, config) {
+            localStorage.setItem(`${JOB_CONFIG_PREFIX}${jobId}`, JSON.stringify(config));
+        }
+
+        function loadJobConfig(jobId) {
+            const raw = localStorage.getItem(`${JOB_CONFIG_PREFIX}${jobId}`);
+            return raw ? JSON.parse(raw) : null;
+        }
+
+        function loadReviewState(jobId) {
+            const raw = localStorage.getItem(`${REVIEW_STATE_PREFIX}${jobId}`);
+            return raw ? JSON.parse(raw) : {};
+        }
+
+        function saveReviewState(jobId) {
+            localStorage.setItem(`${REVIEW_STATE_PREFIX}${jobId}`, JSON.stringify(reviewState));
+        }
+
+        function ensureReviewState(jobId, results) {
+            reviewState = loadReviewState(jobId);
+            let changed = false;
+            results.forEach(result => {
+                if (!reviewState[result.imagePath]) {
+                    reviewState[result.imagePath] = 'unchecked';
+                    changed = true;
+                }
+            });
+            if (changed) {
+                saveReviewState(jobId);
+            }
+        }
+
+        function updateReviewCounts() {
+            const counts = { approved: 0, rejected: 0, unchecked: 0 };
+            currentResults.forEach(result => {
+                const status = reviewState[result.imagePath] || 'unchecked';
+                counts[status] += 1;
+            });
+            const container = document.getElementById('reviewCounts');
+            container.innerHTML = `
+                <div class="review-count">Approved: ${counts.approved}</div>
+                <div class="review-count">Rejected: ${counts.rejected}</div>
+                <div class="review-count">Unchecked: ${counts.unchecked}</div>
+            `;
+        }
+
+        function setReviewStatus(imagePath, status) {
+            reviewState[imagePath] = status;
+            saveReviewState(currentJobId);
+            updateReviewCounts();
+            renderResultsGrid();
+            selectResult(selectedResultIndex);
+        }
+
+        function selectResult(index) {
+            if (index < 0 || index >= currentResults.length) return;
+            selectedResultIndex = index;
+            updateReviewPanel();
+            document.querySelectorAll('.result-card').forEach(card => card.classList.remove('active'));
+            const activeCard = document.querySelector(`.result-card[data-index="${index}"]`);
+            if (activeCard) activeCard.classList.add('active');
+        }
+
+        function updateReviewPanel() {
+            const panel = document.getElementById('reviewPanel');
+            if (!currentResults.length) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'grid';
+            const result = currentResults[selectedResultIndex];
+            const status = reviewState[result.imagePath] || 'unchecked';
+            const imageSrc = `/api/file?path=${encodeURIComponent(result.imagePath)}`;
+            document.getElementById('reviewImage').src = imageSrc;
+            document.getElementById('reviewFilename').textContent = result.filename;
+            document.getElementById('reviewAnnCount').textContent = result.annotations.length;
+            const badge = document.getElementById('reviewStatusBadge');
+            badge.className = `status-badge ${status}`;
+            badge.textContent = status.toUpperCase();
+        }
+
+        function updateLivePreview(progress) {
+            const liveImg = document.getElementById('livePreviewImage');
+            const label = document.getElementById('livePreviewLabel');
+            const liveCanvas = document.getElementById('livePreviewCanvas');
+            if (!activeFolderPath) {
+                label.textContent = 'Waiting for images...';
+                return;
+            }
+            let previewName = progress.currentImage;
+            if (!previewName && progress.results && progress.results.length > 0) {
+                previewName = progress.results[progress.results.length - 1].filename;
+            }
+            if (!previewName) {
+                label.textContent = 'Waiting for images...';
+                return;
+            }
+            const result = progress.results
+                ? progress.results.find(r => r.filename === previewName)
+                : null;
+            lastPreviewAnnotations = result?.annotations || [];
+            const imagePath = joinPath(activeFolderPath, previewName);
+            if (imagePath === lastPreviewPath && lastPreviewStatus === 'ok') return;
+            lastPreviewPath = imagePath;
+            const src = `/api/file?path=${encodeURIComponent(imagePath)}&t=${Date.now()}`;
+            label.textContent = `Loading preview: ${previewName}`;
+            liveImg.src = src;
+            liveImg.onload = () => {
+                lastPreviewStatus = 'ok';
+                label.textContent = `Live preview: ${previewName}`;
+                drawLivePreviewBoxes(liveImg, liveCanvas, lastPreviewAnnotations);
+            };
+            liveImg.onerror = () => {
+                lastPreviewStatus = 'error';
+                label.textContent = `Preview failed for ${previewName}. Check folder access.`;
+                if (liveCanvas) {
+                    const ctx = liveCanvas.getContext('2d');
+                    ctx?.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+                }
+            };
+        }
+
+        function drawLivePreviewBoxes(imageEl, canvasEl, annotations) {
+            if (!imageEl || !canvasEl) return;
+            const ctx = canvasEl.getContext('2d');
+            if (!ctx) return;
+
+            const width = imageEl.clientWidth;
+            const height = imageEl.clientHeight;
+            canvasEl.width = width;
+            canvasEl.height = height;
+            ctx.clearRect(0, 0, width, height);
+
+            if (!annotations || annotations.length === 0 || !imageEl.naturalWidth || !imageEl.naturalHeight) {
+                return;
+            }
+
+            const scale = Math.min(width / imageEl.naturalWidth, height / imageEl.naturalHeight);
+            const scaledWidth = imageEl.naturalWidth * scale;
+            const scaledHeight = imageEl.naturalHeight * scale;
+            const offsetX = (width - scaledWidth) / 2;
+            const offsetY = (height - scaledHeight) / 2;
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2;
+            ctx.font = '12px ui-sans-serif, system-ui';
+            ctx.fillStyle = '#10b981';
+
+            annotations.forEach(ann => {
+                if (!ann?.bbox) return;
+                const x = offsetX + ann.bbox.x * scale;
+                const y = offsetY + ann.bbox.y * scale;
+                const w = ann.bbox.width * scale;
+                const h = ann.bbox.height * scale;
+                ctx.strokeRect(x, y, w, h);
+                if (ann.labelName) {
+                    ctx.fillText(ann.labelName, x + 4, Math.max(12, y + 12));
+                }
+            });
+        }
 
         // Start batch annotation
         async function startBatchAnnotation() {
             const actionId = window.appLogger?.startAction('startBatchAnnotation');
 
-            const folderPath = document.getElementById('folderPath').value;
+            const folderPath = normalizeFolderPath(document.getElementById('folderPath').value);
             const engine = document.getElementById('engine').value;
             const model = document.getElementById('model').value;
             const confidence = parseFloat(document.getElementById('confidence').value);
@@ -541,6 +955,12 @@
                 }
 
                 currentJobId = data.jobId;
+                activeFolderPath = folderPath;
+                currentJobConfig = { folderPath, engine, model, confidence, targetClass, labelName };
+                storeJobConfig(currentJobId, currentJobConfig);
+                assignBatchNumber(currentJobId);
+                localStorage.setItem(LAST_BATCH_JOB_ID, currentJobId);
+                updateOutputPaths();
 
                 window.appLogger?.info('Batch job started', { jobId: currentJobId });
                 if (actionId) window.appLogger.endAction(actionId, true, { jobId: currentJobId });
@@ -577,6 +997,12 @@
                     }
 
                     updateProgress(data.progress);
+                    if (data.progress?.results?.length) {
+                        currentResults = data.progress.results;
+                        ensureReviewState(currentJobId, currentResults);
+                        storeReviewData(currentJobId);
+                        updateReviewCounts();
+                    }
 
                     // Stop polling if job is complete or failed
                     if (data.progress.status === 'completed' || data.progress.status === 'failed') {
@@ -603,6 +1029,9 @@
 
             const elapsed = Math.round((Date.now() - progress.startTime) / 1000);
             document.getElementById('elapsedTime').textContent = `${elapsed}s`;
+
+            updateLivePreview(progress);
+            updateDiagnostics(progress, 'diagnosticsText');
         }
 
         // Show results
@@ -620,20 +1049,47 @@
             const statusBadge = document.getElementById('resultsStatus');
             statusBadge.className = `status-badge ${progress.status}`;
             statusBadge.textContent = progress.status.toUpperCase();
+            const batchNumber = assignBatchNumber(progress.jobId);
+            document.getElementById('batchMeta').textContent = `Batch #${batchNumber} • Job ID: ${progress.jobId}`;
+            updateDiagnostics(progress, 'resultsDiagnosticsText');
 
-            // Render results grid
+            currentResults = progress.results || [];
+            if (!activeFolderPath && currentResults.length > 0) {
+                activeFolderPath = getFolderFromImagePath(currentResults[0].imagePath);
+            }
+            const folderInput = document.getElementById('folderPath');
+            if (activeFolderPath && !folderInput.value) {
+                folderInput.value = activeFolderPath;
+                updateOutputPaths();
+            }
+            if (!currentJobConfig) {
+                currentJobConfig = loadJobConfig(currentJobId);
+            }
+            ensureReviewState(currentJobId, currentResults);
+            storeReviewData(currentJobId);
+            renderResultsGrid();
+            updateReviewCounts();
+            selectResult(0);
+
+            // Load recent jobs
+            loadRecentJobs();
+        }
+
+        function renderResultsGrid() {
             const grid = document.getElementById('resultsGrid');
             grid.innerHTML = '';
 
-            if (progress.results.length === 0) {
+            if (currentResults.length === 0) {
                 grid.innerHTML = '<div class="empty-state"><p>No results found</p></div>';
                 return;
             }
 
-            progress.results.forEach(result => {
+            currentResults.forEach((result, index) => {
+                const reviewStatus = reviewState[result.imagePath] || 'unchecked';
                 const card = document.createElement('div');
-                card.className = `result-card ${result.status}`;
-                card.onclick = () => openInAnnotator(result.imagePath);
+                card.className = `result-card ${result.status} review-${reviewStatus}`;
+                card.dataset.index = index;
+                card.onclick = () => selectResult(index);
 
                 card.innerHTML = `
                     <img class="result-image" src="/api/file?path=${encodeURIComponent(result.imagePath)}"
@@ -642,16 +1098,34 @@
                         <div class="result-filename" title="${result.filename}">${result.filename}</div>
                         <div class="result-meta">
                             <span class="annotation-badge">${result.annotations.length} boxes</span>
-                            <span>${result.status === 'success' ? '✓' : '✗'}</span>
+                            <span class="status-badge ${reviewStatus}">${reviewStatus.toUpperCase()}</span>
                         </div>
                     </div>
                 `;
 
                 grid.appendChild(card);
             });
+        }
 
-            // Load recent jobs
-            loadRecentJobs();
+        function updateDiagnostics(progress, targetId) {
+            const el = document.getElementById(targetId);
+            if (!el || !progress) return;
+            const total = progress.totalImages || 0;
+            const processed = progress.processedImages || 0;
+            const results = progress.results || [];
+            const failed = results.filter(r => r.status === 'failed').length;
+            const empty = results.filter(r => r.status === 'success' && (!r.annotations || r.annotations.length === 0)).length;
+            const lastFailed = results.slice().reverse().find(r => r.status === 'failed' && r.error);
+            const lastError = progress.error || (lastFailed ? lastFailed.error : '');
+            const parts = [
+                `Processed ${processed}/${total}`,
+                `Failed ${failed}`,
+                `Zero-box ${empty}`
+            ];
+            if (lastError) {
+                parts.push(`Last error: ${lastError}`);
+            }
+            el.textContent = parts.join(' • ');
         }
 
         // Open image in annotator
@@ -660,10 +1134,190 @@
             window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}`;
         }
 
+        function openSelectedInAnnotator() {
+            if (!currentResults.length) return;
+            openAnnotatorWithBatch();
+        }
+
+        function selectPreviousResult() {
+            if (!currentResults.length) return;
+            const nextIndex = selectedResultIndex - 1;
+            selectResult(nextIndex < 0 ? currentResults.length - 1 : nextIndex);
+        }
+
+        function selectNextResult() {
+            if (!currentResults.length) return;
+            const nextIndex = selectedResultIndex + 1;
+            selectResult(nextIndex >= currentResults.length ? 0 : nextIndex);
+        }
+
+        function setSelectedReviewStatus(status) {
+            if (!currentResults.length) return;
+            const result = currentResults[selectedResultIndex];
+            setReviewStatus(result.imagePath, status);
+        }
+
         // Review annotations
         function reviewAnnotations() {
-            const folderPath = document.getElementById('folderPath').value;
+            const folderPath = normalizeFolderPath(activeFolderPath || document.getElementById('folderPath').value);
+            if (!folderPath) {
+                alert('Folder path not available');
+                return;
+            }
+            openAnnotatorWithBatch();
+        }
+
+        function openAnnotatorWithBatch() {
+            const folderPath = normalizeFolderPath(activeFolderPath || document.getElementById('folderPath').value);
+            if (!folderPath) {
+                alert('Folder path not available');
+                return;
+            }
+            const jobId = currentJobId || localStorage.getItem(LAST_BATCH_JOB_ID);
+            if (jobId) {
+                storeReviewData(jobId);
+                window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}&batchJob=${encodeURIComponent(jobId)}`;
+                return;
+            }
             window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}`;
+        }
+
+        async function saveReviewedResults(status) {
+            if (!currentJobId) {
+                alert('No job to save');
+                return;
+            }
+
+            const folderPath = normalizeFolderPath(activeFolderPath || document.getElementById('folderPath').value);
+            if (!folderPath) {
+                alert('Folder path not available');
+                return;
+            }
+
+            const outputFolder = status === 'approved'
+                ? joinPath(folderPath, 'labels_approved')
+                : status === 'rejected'
+                ? joinPath(folderPath, 'labels_rejected')
+                : joinPath(folderPath, 'labels_unchecked');
+
+            const filtered = currentResults.filter(result => {
+                const review = reviewState[result.imagePath] || 'unchecked';
+                return review === status && result.status === 'success';
+            });
+
+            if (filtered.length === 0) {
+                alert(`No ${status} results to save`);
+                return;
+            }
+
+            try {
+                const saveResponse = await fetch('/api/batch-annotate/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jobId: currentJobId,
+                        annotations: filtered,
+                        outputFolder
+                    })
+                });
+
+                const saveData = await saveResponse.json();
+
+                if (!saveResponse.ok) {
+                    throw new Error(saveData.error || 'Failed to save annotations');
+                }
+
+                if (status === 'approved') {
+                    await createDatasetVersion(filtered.length);
+                }
+
+                alert(`Saved ${saveData.savedCount} ${status} annotations to ${outputFolder}`);
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function runYoloCheck() {
+            const box = document.getElementById('yoloCheckBox');
+            const text = document.getElementById('yoloCheckText');
+            if (box) box.style.display = 'block';
+            if (text) text.textContent = 'Checking YOLO runtime...';
+
+            try {
+                const response = await fetch('/api/yolo/check');
+                const data = await response.json();
+                if (!response.ok || !data.ok) {
+                    const err = data.error || 'YOLO check failed';
+                    if (text) {
+                        text.textContent = `${err} • Try: pip install ultralytics torch`;
+                    }
+                    return;
+                }
+
+                const info = data.info || {};
+                const models = (info.model_files_found || []).length;
+                const parts = [
+                    `Python ${info.python_version || '-'}`,
+                    `torch ${info.torch_version || '-'}`,
+                    `ultralytics ${info.ultralytics_version || '-'}`,
+                    `models found ${models}`
+                ];
+                if (text) {
+                    text.textContent = parts.join(' • ');
+                }
+            } catch (error) {
+                if (text) {
+                    text.textContent = `YOLO check failed: ${error.message}`;
+                }
+            }
+        }
+
+        async function createDatasetVersion(approvedCount) {
+            const config = currentJobConfig || loadJobConfig(currentJobId) || {};
+            const productName = config.labelName || document.getElementById('labelName').value || 'Batch Annotation';
+            const sourceFolder = config.folderPath || activeFolderPath || document.getElementById('folderPath').value;
+            const segmentationModel = config.engine
+                ? `${config.engine}:${config.model || 'default'}`
+                : 'batch-annotation';
+
+            const payload = {
+                product_name: productName,
+                source_folder: sourceFolder,
+                source_images: currentResults.length,
+                segmentation_model: segmentationModel,
+                augmentations: {
+                    zoom: false,
+                    lighting: false,
+                    colorJitter: false,
+                    shadows: false,
+                    rotation: false,
+                    flip: false,
+                    blur: false,
+                    noise: false,
+                    augmentationsPerBackground: 0
+                },
+                background_images: [],
+                total_images: approvedCount,
+                train_images: approvedCount,
+                val_images: 0,
+                export_formats: ['yolo'],
+                description: `Batch annotation approved set for ${productName}`,
+                tags: [productName, 'batch-annotation', 'approved']
+            };
+
+            try {
+                const response = await fetch('/api/versions/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Failed to create dataset version');
+                }
+            } catch (error) {
+                alert(`Saved approved labels, but versioning failed: ${error.message}`);
+            }
         }
 
         // Export annotations
@@ -683,7 +1337,7 @@
                     throw new Error(data.error || 'Failed to get job data');
                 }
 
-                const folderPath = document.getElementById('folderPath').value;
+                const folderPath = activeFolderPath || document.getElementById('folderPath').value;
                 const outputFolder = folderPath + '/labels';
 
                 const saveResponse = await fetch('/api/batch-annotate/save', {
@@ -753,6 +1407,9 @@
         function startNewJob() {
             document.getElementById('resultsCard').style.display = 'none';
             currentJobId = null;
+            currentResults = [];
+            selectedResultIndex = 0;
+            reviewState = {};
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
@@ -775,6 +1432,7 @@
                 data.jobs.slice().reverse().forEach(job => {
                     const jobItem = document.createElement('div');
                     jobItem.className = 'job-item';
+                    const batchNumber = assignBatchNumber(job.jobId);
 
                     const elapsed = job.endTime
                         ? Math.round((job.endTime - job.startTime) / 1000)
@@ -784,7 +1442,7 @@
                         <div class="job-header">
                             <div>
                                 <span class="status-badge ${job.status}">${job.status.toUpperCase()}</span>
-                                <span class="job-id">${job.jobId}</span>
+                                <span class="job-id">Batch #${batchNumber} • ${job.jobId}</span>
                             </div>
                             <div class="job-actions">
                                 <button class="btn btn-secondary" onclick="viewJobResults('${job.jobId}')">
@@ -815,6 +1473,13 @@
                 }
 
                 currentJobId = jobId;
+                localStorage.setItem(LAST_BATCH_JOB_ID, jobId);
+                currentJobConfig = loadJobConfig(jobId);
+                if (currentJobConfig?.folderPath) {
+                    activeFolderPath = currentJobConfig.folderPath;
+                    document.getElementById('folderPath').value = currentJobConfig.folderPath;
+                    updateOutputPaths();
+                }
                 showResults(data.progress);
                 window.scrollTo({ top: document.getElementById('resultsCard').offsetTop - 20, behavior: 'smooth' });
             } catch (error) {
@@ -834,6 +1499,9 @@
             if (path) {
                 document.getElementById('folderPath').value = path;
             }
+
+            document.getElementById('folderPath').addEventListener('input', updateOutputPaths);
+            updateOutputPaths();
         });
     </script>
 </body>

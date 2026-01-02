@@ -70,7 +70,35 @@ document.addEventListener('DOMContentLoaded', () => {
     setupAiThresholdLabel();
     setupSam2Hint();
     updateStats();
+    hydrateFromQueryParams();
 });
+
+async function hydrateFromQueryParams() {
+    const params = new URLSearchParams(window.location.search);
+    const path = params.get('path');
+    const batchJob = params.get('batchJob');
+
+    if (!path) return;
+
+    const datasetPathInput = document.getElementById('datasetPath');
+    if (datasetPathInput) {
+        datasetPathInput.value = path;
+    }
+
+    await loadDataset();
+
+    if (batchJob) {
+        const raw = localStorage.getItem(`batchReviewData_${batchJob}`);
+        if (raw) {
+            try {
+                const batchData = JSON.parse(raw);
+                applyBatchReviewData(batchData);
+            } catch (error) {
+                console.error('Failed to load batch review data:', error);
+            }
+        }
+    }
+}
 
 function initializeCanvas() {
     state.canvas = document.getElementById('annotationCanvas');
@@ -145,6 +173,7 @@ async function loadDataset() {
             loadImage(0);
         }
         updateStats();
+        initializeHistory();
 
         if (actionId) window.appLogger.endAction(actionId, true, { imageCount: imageFiles.length });
     } catch (error) {
@@ -153,6 +182,51 @@ async function loadDataset() {
         alert('Failed to load dataset: ' + error.message);
         if (actionId) window.appLogger.failAction(actionId, error, { path });
     }
+}
+
+function applyBatchReviewData(batchData) {
+    if (!batchData || !Array.isArray(batchData.results)) return;
+
+    const resultsByFilename = new Map();
+    batchData.results.forEach(result => {
+        if (result.status !== 'success') return;
+        resultsByFilename.set(result.filename, result.annotations || []);
+    });
+
+    // Reset annotations and label counts for a clean import
+    state.annotations = {};
+    state.labels.forEach(label => {
+        label.count = 0;
+    });
+
+    state.images.forEach(image => {
+        const annotations = resultsByFilename.get(image.filename);
+        if (!annotations || annotations.length === 0) return;
+
+        const mapped = annotations.map(ann => {
+            const labelName = ann.labelName || batchData.labelName || 'Product';
+            const labelId = ensureLabel(labelName);
+            const label = state.labels.find(l => l.id === labelId);
+            if (label) label.count += 1;
+
+            return {
+                labelId,
+                bbox: ann.bbox,
+                confidence: ann.confidence || 1.0,
+                createdBy: 'batch',
+                polygon: ann.polygon
+            };
+        });
+
+        state.annotations[image.id] = mapped;
+    });
+
+    renderLabels();
+    renderImageList();
+    renderAnnotationsList();
+    updateStats();
+    updateSam2Hint();
+    initializeHistory();
 }
 
 function renderImageList() {
@@ -803,6 +877,11 @@ function saveToHistory() {
     }
 }
 
+function initializeHistory() {
+    state.history = [JSON.stringify(state.annotations)];
+    state.historyIndex = 0;
+}
+
 function undo() {
     if (state.historyIndex > 0) {
         state.historyIndex--;
@@ -1171,6 +1250,11 @@ async function exportAnnotations() {
 
 // Load saved progress on startup
 window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    const batchJob = params.get('batchJob');
+    if (batchJob) {
+        return;
+    }
     const saved = localStorage.getItem('annotation_progress');
     if (saved) {
         try {

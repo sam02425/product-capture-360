@@ -983,8 +983,25 @@
 
     .welcome-actions {
       display: flex;
+      flex-direction: column;
       gap: 1rem;
       margin-top: 2rem;
+    }
+    .welcome-nav {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+    }
+    .welcome-link {
+      background: none;
+      border: none;
+      color: var(--primary);
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+    }
+    .welcome-link:hover {
+      text-decoration: underline;
     }
 
     .welcome-checkbox {
@@ -1226,28 +1243,28 @@
               <div class="step-number">1</div>
               <div class="step-content">
                 <h3>Capture Images</h3>
-                <p>Go to <strong>Capture</strong> tab → Connect camera → Select storage → Start automated session or capture manually.</p>
+                <p>Go to <button class="welcome-link" type="button" onclick="goToWelcomeTab('capture')">Capture</button> tab → Connect camera → Select storage → Start automated session or capture manually.</p>
               </div>
             </div>
             <div class="step-card">
               <div class="step-number">2</div>
               <div class="step-content">
                 <h3>Apply Augmentations</h3>
-                <p>Visit <strong>Augmentation</strong> tab → Upload backgrounds → Enable augmentations → Preview results → Fine-tune settings.</p>
+                <p>Visit <button class="welcome-link" type="button" onclick="goToWelcomeTab('augment')">Augmentation</button> tab → Upload backgrounds → Enable augmentations → Preview results → Fine-tune settings.</p>
               </div>
             </div>
             <div class="step-card">
               <div class="step-number">3</div>
               <div class="step-content">
                 <h3>Annotate with AI</h3>
-                <p>Open <strong>Annotation</strong> tab → Upload images → Select YOLO model → Auto-annotate → Refine manually with 4 tools.</p>
+                <p>Open <button class="welcome-link" type="button" onclick="goToWelcomeTab('annotate')">Annotation</button> tab → Upload images → Select YOLO model → Auto-annotate → Refine manually with 4 tools.</p>
               </div>
             </div>
             <div class="step-card">
               <div class="step-number">4</div>
               <div class="step-content">
                 <h3>Generate & Export</h3>
-                <p>Navigate to <strong>Generate</strong> tab → Choose formats (YOLO, COCO) → Set train/val split → Generate dataset.</p>
+                <p>Navigate to <button class="welcome-link" type="button" onclick="goToWelcomeTab('generate')">Generate</button> tab → Choose formats (YOLO, COCO) → Set train/val split → Generate dataset.</p>
               </div>
             </div>
           </div>
@@ -1281,6 +1298,15 @@
           <button class="btn btn-primary btn-full" onclick="closeWelcome()">
             Get Started
           </button>
+          <div class="welcome-nav">
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('capture')">Capture</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('augment')">Augmentation</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('annotate')">Annotation</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('visualize')">Visualize</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('generate')">Generate</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('versions')">Versions</button>
+            <button class="btn btn-secondary btn-full" onclick="goToWelcomeTab('docs')">Docs</button>
+          </div>
           <button class="btn btn-secondary btn-full" onclick="openDocs()">
             View Documentation
           </button>
@@ -1517,13 +1543,13 @@
   <div class="container">
     <!-- Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('capture')">📸 Capture</button>
-      <button class="tab" onclick="switchTab('augment')">🎨 Augmentation</button>
-      <button class="tab" onclick="switchTab('annotate')">🏷️ Annotation</button>
-      <button class="tab" onclick="switchTab('visualize')">🔍 Visualize Dataset</button>
-      <button class="tab" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
-      <button class="tab" onclick="switchTab('versions')">📦 Versions</button>
-      <button class="tab" onclick="switchTab('docs')">📚 Documentation</button>
+      <button class="tab active" data-tab="capture" onclick="switchTab('capture')">📸 Capture</button>
+      <button class="tab" data-tab="augment" onclick="switchTab('augment')">🎨 Augmentation</button>
+      <button class="tab" data-tab="annotate" onclick="switchTab('annotate')">🏷️ Annotation</button>
+      <button class="tab" data-tab="visualize" onclick="switchTab('visualize')">🔍 Visualize Dataset</button>
+      <button class="tab" data-tab="generate" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
+      <button class="tab" data-tab="versions" onclick="switchTab('versions')">📦 Versions</button>
+      <button class="tab" data-tab="docs" onclick="switchTab('docs')">📚 Documentation</button>
     </div>
 
     <!-- Tab 1: Capture -->

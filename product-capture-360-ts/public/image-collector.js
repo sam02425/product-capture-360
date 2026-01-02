@@ -39,7 +39,7 @@ const jpost = (url, body) => fetch(url, {
 window.switchTab = function(tabName) {
   // Update tab buttons
   document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-  const clickedTab = Array.from(document.querySelectorAll('.tab')).find(t => t.textContent.includes(tabName === 'capture' ? '1.' : tabName === 'augment' ? '2.' : tabName === 'generate' ? '3.' : '4.'));
+  const clickedTab = document.querySelector(`.tab[data-tab="${tabName}"]`);
   if (clickedTab) clickedTab.classList.add('active');
 
   // Update tab content
@@ -2569,6 +2569,11 @@ window.toggleDontShowAgain = function(element) {
 
 window.openDocs = function() {
   window.open('/annotation-docs.html', '_blank');
+  closeWelcome();
+};
+
+window.goToWelcomeTab = function(tabName) {
+  switchTab(tabName);
   closeWelcome();
 };
 
