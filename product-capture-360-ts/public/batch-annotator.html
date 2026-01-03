@@ -463,8 +463,18 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 AI Batch Annotation</h1>
-            <p>Automatically annotate entire folders with YOLO11 or SAM2</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div>
+                    <h1 style="margin: 0;">🤖 AI Batch Annotation</h1>
+                    <p style="margin: 5px 0 0 0;">Automatically annotate entire folders with YOLO11 or SAM2</p>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-secondary" onclick="window.location.href='/'" style="margin: 0;">🏠 Home</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html'" style="margin: 0;">📷 Camera</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'" style="margin: 0;">📝 Annotator</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/logs.html'" style="margin: 0;">📋 Logs</button>
+                </div>
+            </div>
         </div>
 
         <!-- Configuration Card -->
