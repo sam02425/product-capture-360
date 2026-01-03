@@ -758,22 +758,37 @@
         ::-webkit-scrollbar-thumb:hover {
             background: var(--border);
         }
+
+        /* Storage Browser Styles */
+        .folder-item {
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: background 0.2s;
+            font-size: 0.8rem;
+        }
+
+        .folder-item:hover {
+            background: rgba(37, 99, 235, 0.08);
+        }
+
+        .folder-item:last-child {
+            border-bottom: none;
+        }
+
+        .folder-icon {
+            font-size: 1rem;
+        }
     </style>
 </head>
 <body>
     <!-- Navbar -->
     <div class="navbar">
         <div class="navbar-brand">
-            <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="9"></circle>
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <line x1="12" y1="2" x2="12" y2="5"></line>
-                    <line x1="12" y1="19" x2="12" y2="22"></line>
-                    <line x1="2" y1="12" x2="5" y2="12"></line>
-                    <line x1="19" y1="12" x2="22" y2="12"></line>
-                </svg>
-            </span>
+            <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 36px; height: 36px; object-fit: contain; margin-right: 8px;">
             <span>Professional Annotator</span>
         </div>
         <div class="navbar-actions">
@@ -809,17 +824,11 @@
                 </span>
                 Export Dataset
             </button>
-            <button class="btn btn-primary btn-sm" onclick="window.location.href='/batch-annotator.html'" style="margin-left: 10px;">
-                <span class="icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                        <path d="M12 3l1.5 3.5L17 8l-3.5 1.5L12 13l-1.5-3.5L7 8l3.5-1.5L12 3z"></path>
-                        <path d="M18 12l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z"></path>
-                    </svg>
-                </span>
-                AI Batch Annotator
-            </button>
+            <!-- Navigation Links -->
             <button class="btn btn-secondary btn-sm" onclick="window.location.href='/'" style="margin-left: 10px;">🏠 Home</button>
             <button class="btn btn-secondary btn-sm" onclick="window.location.href='/image-collector.html'">📷 Camera</button>
+            <button class="btn btn-primary btn-sm" style="background: var(--primary); border-color: var(--primary);">📝 Annotator</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.location.href='/batch-annotator.html'">🤖 Batch AI</button>
             <button class="btn btn-secondary btn-sm" onclick="window.location.href='/logs.html'">📋 Logs</button>
         </div>
     </div>
@@ -829,11 +838,40 @@
         <!-- Left Sidebar -->
         <div class="sidebar-left">
             <div class="sidebar-section">
+                <h3>💾 Storage Browser</h3>
+                <div style="margin-bottom: 0.75rem;">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary);">Quick Select</label>
+                    <select id="storageSelect" onchange="selectStorageDevice()" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">
+                        <option value="">-- Select location --</option>
+                        <option value="/Volumes/UBUNTU 24_0/360Photo_Captures">/Volumes/UBUNTU 24_0/360Photo_Captures</option>
+                        <option value="/Users/saumil/Desktop/photos">/Users/saumil/Desktop/photos</option>
+                        <option value="/Users/saumil/Desktop/360Photo">/Users/saumil/Desktop/360Photo</option>
+                    </select>
+                </div>
+                <div style="margin-bottom: 0.75rem;">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary);">Current Path</label>
+                    <div style="display: flex; gap: 4px;">
+                        <input type="text" id="storagePath" readonly style="flex: 1; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.75rem; background: var(--bg-tertiary); font-family: monospace;">
+                        <button class="btn btn-secondary btn-sm" onclick="goUpStorageFolder()" title="Go Up" style="padding: 0.5rem;">⬆️</button>
+                    </div>
+                </div>
+                <div style="margin-bottom: 0.75rem;">
+                    <div id="storageBrowser" style="border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: var(--bg-tertiary); font-size: 0.8rem;">
+                        <div style="padding: 30px 10px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">
+                            Select a location to browse
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="useCurrentStoragePath(event)" style="width: 100%; margin-bottom: 0.5rem;">✓ Use This Folder</button>
+            </div>
+
+            <div class="sidebar-section">
                 <h3>Project</h3>
                 <div style="margin-bottom: 1rem;">
                     <label>Dataset Folder</label>
                     <input type="text" id="datasetPath" placeholder="/path/to/images"
-                           value="/Volumes/UBUNTU 24_0/360Photo_Captures/Abasolo_Whiskey_750ml">
+                           value="/Volumes/UBUNTU 24_0/360Photo_Captures/Abasolo_Whiskey_750ml"
+                           autocomplete="off" spellcheck="false">
                 </div>
                 <div style="margin-bottom: 1rem;">
                     <label>AI Confidence Threshold</label>

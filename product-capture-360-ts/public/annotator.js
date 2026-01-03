@@ -78,6 +78,8 @@ async function hydrateFromQueryParams() {
     const path = params.get('path');
     const batchJob = params.get('batchJob');
 
+    console.log('Hydrating from query params:', { path, batchJob });
+
     if (!path) return;
 
     const datasetPathInput = document.getElementById('datasetPath');
@@ -88,14 +90,23 @@ async function hydrateFromQueryParams() {
     await loadDataset();
 
     if (batchJob) {
+        console.log('Loading batch job data for:', batchJob);
         const raw = localStorage.getItem(`batchReviewData_${batchJob}`);
+        console.log('Batch data from localStorage:', raw ? 'Found' : 'Not found');
         if (raw) {
             try {
                 const batchData = JSON.parse(raw);
+                console.log('Batch data parsed:', batchData);
+                console.log('Results count:', batchData.results?.length || 0);
                 applyBatchReviewData(batchData);
+                console.log('Batch data applied successfully');
             } catch (error) {
                 console.error('Failed to load batch review data:', error);
+                alert('Failed to load batch annotations: ' + error.message);
             }
+        } else {
+            console.warn('No batch review data found in localStorage for job:', batchJob);
+            alert('No batch annotation data found. Please run the batch annotation job first.');
         }
     }
 }
@@ -114,6 +125,106 @@ function initializeCanvas() {
     state.canvas.addEventListener('touchstart', handleTouchStart);
     state.canvas.addEventListener('touchmove', handleTouchMove);
     state.canvas.addEventListener('touchend', handleTouchEnd);
+
+    // Enable paste functionality for dataset path input
+    const datasetPathInput = document.getElementById('datasetPath');
+    if (datasetPathInput) {
+        datasetPathInput.addEventListener('paste', (e) => {
+            e.stopPropagation();
+            // Let the default paste behavior work
+        });
+
+        // Also ensure the input is editable
+        datasetPathInput.readOnly = false;
+        datasetPathInput.disabled = false;
+    }
+}
+
+// Storage Browser Functions
+async function selectStorageDevice() {
+    const path = document.getElementById('storageSelect').value;
+    if (!path) return;
+
+    document.getElementById('storagePath').value = path;
+    await browseStorageFolder(path);
+}
+
+async function browseStorageFolder(path) {
+    const browser = document.getElementById('storageBrowser');
+    browser.innerHTML = '<div style="padding: 20px 10px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">Loading...</div>';
+
+    try {
+        const response = await fetch('/api/list-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to list directory');
+        }
+
+        const items = await response.json();
+
+        // Filter to only show directories
+        const folders = items.filter(item => item.isDirectory);
+
+        if (folders.length === 0) {
+            browser.innerHTML = '<div style="padding: 20px 10px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">No subfolders found</div>';
+            return;
+        }
+
+        browser.innerHTML = folders.map(folder => `
+            <div class="folder-item" onclick="navigateToFolder('${path}', '${folder.name}')">
+                <span class="folder-icon">📁</span>
+                <span>${folder.name}</span>
+            </div>
+        `).join('');
+    } catch (error) {
+        browser.innerHTML = `<div style="padding: 20px 10px; text-align: center; color: var(--danger); font-size: 0.75rem;">Error: ${error.message}</div>`;
+        console.error('Failed to browse folder:', error);
+    }
+}
+
+async function navigateToFolder(basePath, folderName) {
+    const newPath = basePath.endsWith('/') ? `${basePath}${folderName}` : `${basePath}/${folderName}`;
+    document.getElementById('storagePath').value = newPath;
+    await browseStorageFolder(newPath);
+}
+
+async function goUpStorageFolder() {
+    const currentPath = document.getElementById('storagePath').value;
+    if (!currentPath) return;
+
+    const lastSlash = currentPath.lastIndexOf('/');
+    if (lastSlash <= 0) return; // Can't go up from root
+
+    const parentPath = currentPath.substring(0, lastSlash);
+    document.getElementById('storagePath').value = parentPath;
+    await browseStorageFolder(parentPath);
+}
+
+function useCurrentStoragePath(e) {
+    const storagePath = document.getElementById('storagePath').value;
+    if (!storagePath) {
+        alert('Please select a folder first');
+        return;
+    }
+
+    document.getElementById('datasetPath').value = storagePath;
+
+    // Show success feedback
+    if (e && e.target) {
+        const btn = e.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Path Set!';
+        btn.style.background = 'var(--success)';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '';
+        }, 2000);
+    }
 }
 
 // Load Dataset
@@ -141,19 +252,34 @@ async function loadDataset() {
         });
 
         if (!response.ok) {
-            const error = new Error(`Failed to load directory: ${response.status}`);
-            window.appLogger?.error('Directory listing failed', { path, status: response.status });
+            let errorMsg = `Failed to load directory: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.error) {
+                    errorMsg = errorData.error;
+                }
+            } catch (e) {
+                // Response wasn't JSON, use default message
+            }
+            const error = new Error(`${errorMsg}\n\nPath: ${path}\n\nPlease verify:\n1. The path exists on your system\n2. The path is correctly formatted\n3. You have read permissions`);
+            window.appLogger?.error('Directory listing failed', { path, status: response.status, error: errorMsg });
             throw error;
         }
 
-        const files = await response.json();
-        const imageFiles = files.filter(f =>
+        const items = await response.json();
+
+        // Handle both old format (array of strings) and new format (array of objects)
+        const fileNames = Array.isArray(items) && items.length > 0 && typeof items[0] === 'object'
+            ? items.filter(item => !item.isDirectory).map(item => item.name)
+            : items;
+
+        const imageFiles = fileNames.filter(f =>
             f.match(/\.(jpg|jpeg|png)$/i) && !f.startsWith('._')
         );
 
         window.appLogger?.info('Dataset loaded successfully', {
             path,
-            totalFiles: files.length,
+            totalFiles: fileNames.length,
             imageFiles: imageFiles.length
         });
 
@@ -289,7 +415,20 @@ async function loadImage(index) {
             url: imageUrl,
             index
         });
-        alert('Failed to load image: ' + imageData.path);
+
+        // Try loading EYEai logo as fallback
+        const fallbackImg = new Image();
+        fallbackImg.onload = () => {
+            state.currentImage = fallbackImg;
+            resizeCanvas();
+            render();
+            renderImageList();
+            renderAnnotationsList();
+            updateStats();
+        };
+        fallbackImg.src = '/EYEai.png';
+
+        alert('Failed to load image: ' + imageData.path + '\n\nShowing placeholder. Please check the file path.');
     };
 
     const imageUrl = `/api/file?path=${encodeURIComponent(imageData.path)}`;

@@ -1490,57 +1490,21 @@
   <div class="header">
     <div class="logo">
       <div style="display: flex; align-items: center; gap: 1rem;">
-        <div class="eye-logo">
-          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <!-- Outer eye shape -->
-            <ellipse cx="50" cy="50" rx="48" ry="30" fill="none" stroke="url(#gradient1)" stroke-width="3"/>
-
-            <!-- Iris gradient -->
-            <defs>
-              <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
-                <stop offset="100%" style="stop-color:#4f46e5;stop-opacity:1" />
-              </linearGradient>
-              <radialGradient id="irisGradient">
-                <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
-                <stop offset="70%" style="stop-color:#4f46e5;stop-opacity:1" />
-                <stop offset="100%" style="stop-color:#3730a3;stop-opacity:1" />
-              </radialGradient>
-              <radialGradient id="pupilGradient">
-                <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
-                <stop offset="100%" style="stop-color:#0f172a;stop-opacity:1" />
-              </radialGradient>
-            </defs>
-
-            <!-- Iris -->
-            <circle cx="50" cy="50" r="18" fill="url(#irisGradient)"/>
-
-            <!-- Pupil -->
-            <circle cx="50" cy="50" r="10" fill="url(#pupilGradient)"/>
-
-            <!-- Highlight -->
-            <circle cx="45" cy="45" r="4" fill="#e2e8f0" opacity="0.8"/>
-            <circle cx="54" cy="52" r="2" fill="#e2e8f0" opacity="0.5"/>
-
-            <!-- Subtle scan lines (tech aesthetic) -->
-            <line x1="30" y1="50" x2="70" y2="50" stroke="#6366f1" stroke-width="0.5" opacity="0.3"/>
-            <line x1="35" y1="45" x2="65" y2="45" stroke="#6366f1" stroke-width="0.5" opacity="0.2"/>
-            <line x1="35" y1="55" x2="65" y2="55" stroke="#6366f1" stroke-width="0.5" opacity="0.2"/>
-          </svg>
-        </div>
+        <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 50px; height: 50px; object-fit: contain;">
         <div>
           <div style="font-size: 1.5rem; font-weight: 700;">Image Collector</div>
-          <div style="font-size: 0.75rem; color: var(--text-dim); font-weight: 400;">Powered by EyeAI</div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); font-weight: 400;">Powered by EYEai</div>
         </div>
       </div>
     </div>
     <div class="nav">
       <button class="nav-btn" onclick="window.location.href='/'">🏠 Home</button>
+      <button class="nav-btn active" onclick="window.location.href='/image-collector.html'">📷 Camera</button>
       <button class="nav-btn" onclick="window.location.href='/annotator.html'">📝 Annotator</button>
       <button class="nav-btn" onclick="window.location.href='/batch-annotator.html'">🤖 Batch AI</button>
       <button class="nav-btn" onclick="window.location.href='/logs.html'">📋 Logs</button>
       <button class="nav-btn" onclick="showWelcome()">❓ Help</button>
-      <button class="nav-btn active" id="statusBadge">🟢 Connected</button>
+      <button class="nav-btn" id="statusBadge">🟢 Connected</button>
     </div>
   </div>
 

@@ -972,13 +972,29 @@ app.post<{ Body: { path: string } }>('/api/list-directory', async (req: any, rep
       return reply.status(400).send({ error: 'Path is not a directory' });
     }
 
-    // List files in directory
+    // List files in directory with type information
     const files = fs.readdirSync(dirPath);
 
-    // Filter out hidden files and system files
-    const filteredFiles = files.filter(f => !f.startsWith('.') && !f.startsWith('_'));
+    // Filter out hidden files and system files, and include directory info
+    const filesWithInfo = files
+      .filter(f => !f.startsWith('.') && !f.startsWith('_'))
+      .map(f => {
+        const fullPath = path.join(dirPath, f);
+        try {
+          const stats = fs.statSync(fullPath);
+          return {
+            name: f,
+            isDirectory: stats.isDirectory()
+          };
+        } catch (e) {
+          return {
+            name: f,
+            isDirectory: false
+          };
+        }
+      });
 
-    return reply.send(filteredFiles);
+    return reply.send(filesWithInfo);
   } catch (error: any) {
     req.log.error({ err: error }, 'Error listing directory');
     return reply.status(500).send({ error: 'Failed to list directory' });

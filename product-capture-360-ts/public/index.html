@@ -31,14 +31,18 @@
   </head>
   <body>
     <div class="wrap">
-      <h2>📸 360° Product Capture (TypeScript Fastify)</h2>
+      <h2 style="display: flex; align-items: center; gap: 12px;">
+        <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 42px; height: 42px; object-fit: contain;">
+        <span>360° Product Capture (TypeScript Fastify)</span>
+      </h2>
 
       <!-- Navigation Tools -->
       <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" style="width:auto" onclick="window.location.href='/image-collector.html'">📷 Camera Setup</button>
-        <button class="btn" style="width:auto" onclick="window.location.href='/annotator.html'">📝 Professional Annotator</button>
-        <button class="btn" style="width:auto" onclick="window.location.href='/batch-annotator.html'">🤖 AI Batch Annotator</button>
-        <button class="btn alt" style="width:auto" onclick="window.location.href='/logs.html'">📋 System Logs</button>
+        <button class="btn" style="width:auto;background:#16a34a;border-color:#166534">🏠 Home</button>
+        <button class="btn alt" style="width:auto" onclick="window.location.href='/image-collector.html'">📷 Camera</button>
+        <button class="btn alt" style="width:auto" onclick="window.location.href='/annotator.html'">📝 Annotator</button>
+        <button class="btn alt" style="width:auto" onclick="window.location.href='/batch-annotator.html'">🤖 Batch AI</button>
+        <button class="btn alt" style="width:auto" onclick="window.location.href='/logs.html'">📋 Logs</button>
       </div>
 
       <div class="grid">
@@ -46,7 +50,7 @@
           <div class="row" style="justify-content:space-between">
             <div>Live Preview</div><span id="camBadge" class="badge">Camera: disconnected</span>
           </div>
-          <div class="preview"><img id="preview" src="/video_feed" alt="preview"></div>
+          <div class="preview"><img id="preview" src="/EYEai.png" alt="preview" onerror="this.src='/EYEai.png'"></div>
           <div class="row">
             <button class="btn alt" onclick="scan()">🔍 Scan Cameras</button>
             <select id="camSelect"></select>

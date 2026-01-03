@@ -458,22 +458,92 @@
                 grid-template-columns: 1fr;
             }
         }
+        .storage-browser {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            background: #f7fafc;
+        }
+        .folder-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.2s;
+        }
+        .folder-item:hover {
+            background: #edf2f7;
+        }
+        .folder-item:last-child {
+            border-bottom: none;
+        }
+        .folder-icon {
+            font-size: 18px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <div>
-                    <h1 style="margin: 0;">🤖 AI Batch Annotation</h1>
-                    <p style="margin: 5px 0 0 0;">Automatically annotate entire folders with YOLO11 or SAM2</p>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 50px; height: 50px; object-fit: contain;">
+                    <div>
+                        <h1 style="margin: 0;">🤖 AI Batch Annotation</h1>
+                        <p style="margin: 5px 0 0 0;">Automatically annotate entire folders with YOLO11 or SAM2</p>
+                    </div>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <button class="btn btn-secondary" onclick="window.location.href='/'" style="margin: 0;">🏠 Home</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html'" style="margin: 0;">📷 Camera</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'" style="margin: 0;">📝 Annotator</button>
+                    <button class="btn btn-primary" style="margin: 0; background: var(--primary); border-color: var(--primary);">🤖 Batch AI</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/logs.html'" style="margin: 0;">📋 Logs</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Storage Browser Card -->
+        <div class="card">
+            <h2>💾 Storage Browser</h2>
+            <p style="color: #718096; margin-bottom: 20px;">Browse and select the folder containing images to annotate</p>
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Quick Select</label>
+                    <select id="storageSelect" onchange="selectStorageDevice()">
+                        <option value="">-- Select a location --</option>
+                        <option value="/Volumes/UBUNTU 24_0/360Photo_Captures">/Volumes/UBUNTU 24_0/360Photo_Captures</option>
+                        <option value="/Users/saumil/Desktop/photos">/Users/saumil/Desktop/photos</option>
+                        <option value="/Users/saumil/Desktop/360Photo">/Users/saumil/Desktop/360Photo</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Current Path</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="storagePath" readonly style="flex: 1; background: #f7fafc;">
+                        <button class="btn btn-secondary" onclick="goUpStorageFolder()" style="margin: 0;">⬆️ Up</button>
+                        <button class="btn btn-secondary" onclick="copyPathToClipboard()" style="margin: 0;">📋 Copy</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Browse Folders</label>
+                <div id="storageBrowser" class="storage-browser">
+                    <div style="padding: 40px; text-align: center; color: #a0aec0;">
+                        Select a location from Quick Select to browse
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <button class="btn btn-primary" onclick="useCurrentStoragePath()">✓ Use This Folder</button>
+                <button class="btn btn-secondary" onclick="refreshStorageBrowser()">🔄 Refresh</button>
             </div>
         </div>
 
@@ -484,7 +554,7 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label>Folder Path</label>
-                    <input type="text" id="folderPath" placeholder="/path/to/images">
+                    <input type="text" id="folderPath" placeholder="/path/to/images" autocomplete="off" spellcheck="false">
                     <p class="help-text">Path to folder containing images to annotate</p>
                 </div>
 
@@ -593,7 +663,7 @@
 
             <div class="live-preview">
                 <div class="live-preview-media">
-                    <img id="livePreviewImage" src="" alt="Live preview">
+                    <img id="livePreviewImage" src="/EYEai.png" alt="Live preview" onerror="this.src='/EYEai.png'">
                     <canvas id="livePreviewCanvas"></canvas>
                 </div>
                 <div>
@@ -640,7 +710,7 @@
             <div class="review-counts" id="reviewCounts"></div>
 
             <div class="review-panel" id="reviewPanel" style="display: none;">
-                <img id="reviewImage" src="" alt="Selected image">
+                <img id="reviewImage" src="/EYEai.png" alt="Selected image" onerror="this.src='/EYEai.png'">
                 <div>
                     <div class="review-meta">
                         <div><strong>File:</strong> <span id="reviewFilename">-</span></div>
@@ -722,6 +792,122 @@
             document.getElementById('approvedOutput').textContent = approved;
             document.getElementById('rejectedOutput').textContent = rejected;
             document.getElementById('uncheckedOutput').textContent = unchecked;
+        }
+
+        // Storage Browser Functions
+        async function selectStorageDevice() {
+            const path = document.getElementById('storageSelect').value;
+            if (!path) return;
+
+            document.getElementById('storagePath').value = path;
+            await browseStorageFolder(path);
+        }
+
+        async function browseStorageFolder(path) {
+            const browser = document.getElementById('storageBrowser');
+            browser.innerHTML = '<div style="padding: 20px; text-align: center; color: #a0aec0;">Loading...</div>';
+
+            try {
+                const response = await fetch('/api/list-directory', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to list directory');
+                }
+
+                const items = await response.json();
+
+                // Filter to only show directories
+                const folders = items.filter(item => item.isDirectory);
+
+                if (folders.length === 0) {
+                    browser.innerHTML = '<div style="padding: 20px; text-align: center; color: #a0aec0;">No subfolders found</div>';
+                    return;
+                }
+
+                browser.innerHTML = folders.map(folder => `
+                    <div class="folder-item" onclick="navigateToFolder('${path}', '${folder.name}')">
+                        <span class="folder-icon">📁</span>
+                        <span>${folder.name}</span>
+                    </div>
+                `).join('');
+            } catch (error) {
+                browser.innerHTML = `<div style="padding: 20px; text-align: center; color: #ef4444;">Error: ${error.message}</div>`;
+                console.error('Failed to browse folder:', error);
+            }
+        }
+
+        async function navigateToFolder(basePath, folderName) {
+            const newPath = joinPath(basePath, folderName);
+            document.getElementById('storagePath').value = newPath;
+            await browseStorageFolder(newPath);
+        }
+
+        async function goUpStorageFolder() {
+            const currentPath = document.getElementById('storagePath').value;
+            if (!currentPath) return;
+
+            const lastSlash = currentPath.lastIndexOf('/');
+            if (lastSlash <= 0) return; // Can't go up from root
+
+            const parentPath = currentPath.substring(0, lastSlash);
+            document.getElementById('storagePath').value = parentPath;
+            await browseStorageFolder(parentPath);
+        }
+
+        function useCurrentStoragePath() {
+            const storagePath = document.getElementById('storagePath').value;
+            if (!storagePath) {
+                alert('Please select a folder first');
+                return;
+            }
+
+            document.getElementById('folderPath').value = storagePath;
+            updateOutputPaths();
+
+            // Scroll to configuration
+            document.querySelector('.card:nth-child(3)').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // Show success feedback
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '✓ Path Set!';
+            btn.style.background = '#10b981';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = '';
+            }, 2000);
+        }
+
+        async function refreshStorageBrowser() {
+            const currentPath = document.getElementById('storagePath').value;
+            if (currentPath) {
+                await browseStorageFolder(currentPath);
+            }
+        }
+
+        function copyPathToClipboard() {
+            const storagePath = document.getElementById('storagePath').value;
+            if (!storagePath) {
+                alert('No path to copy');
+                return;
+            }
+
+            navigator.clipboard.writeText(storagePath).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 1500);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                alert('Failed to copy path to clipboard');
+            });
         }
 
         function loadBatchNumberMap() {
@@ -1103,7 +1289,7 @@
 
                 card.innerHTML = `
                     <img class="result-image" src="/api/file?path=${encodeURIComponent(result.imagePath)}"
-                         alt="${result.filename}" onerror="this.style.display='none'">
+                         alt="${result.filename}" onerror="this.src='/EYEai.png'">
                     <div class="result-info">
                         <div class="result-filename" title="${result.filename}">${result.filename}</div>
                         <div class="result-meta">
@@ -1179,16 +1365,25 @@
 
         function openAnnotatorWithBatch() {
             const folderPath = normalizeFolderPath(activeFolderPath || document.getElementById('folderPath').value);
+            console.log('Opening annotator with folder:', folderPath);
+            console.log('Active folder path:', activeFolderPath);
+            console.log('Current job ID:', currentJobId);
+            console.log('Current results count:', currentResults.length);
+
             if (!folderPath) {
                 alert('Folder path not available');
                 return;
             }
+
             const jobId = currentJobId || localStorage.getItem(LAST_BATCH_JOB_ID);
             if (jobId) {
                 storeReviewData(jobId);
+                console.log('Stored review data for job:', jobId);
+                console.log('Opening annotator with batch job:', jobId);
                 window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}&batchJob=${encodeURIComponent(jobId)}`;
                 return;
             }
+            console.log('Opening annotator without batch job');
             window.location.href = `/annotator.html?path=${encodeURIComponent(folderPath)}`;
         }
 
@@ -1510,7 +1705,19 @@
                 document.getElementById('folderPath').value = path;
             }
 
-            document.getElementById('folderPath').addEventListener('input', updateOutputPaths);
+            const folderPathInput = document.getElementById('folderPath');
+            folderPathInput.addEventListener('input', updateOutputPaths);
+
+            // Enable paste functionality
+            folderPathInput.addEventListener('paste', (e) => {
+                e.stopPropagation();
+                // Let the default paste behavior work
+            });
+
+            // Ensure the input is editable
+            folderPathInput.readOnly = false;
+            folderPathInput.disabled = false;
+
             updateOutputPaths();
         });
     </script>
