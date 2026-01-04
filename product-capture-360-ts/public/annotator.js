@@ -490,7 +490,7 @@ function render() {
         const color = label ? label.color : '#3b82f6';
         const isSelected = state.selectedAnnotationId === idx;
 
-        drawBoundingBox(ann.bbox, color, isSelected, label ? label.name : '');
+        drawBoundingBox(ann.bbox, color, isSelected, label ? label.name : '', ann.polygon);
     });
 
     // Draw current drawing
@@ -512,18 +512,84 @@ function render() {
         ctx.setLineDash([]);
     }
 
+    // Draw in-progress polygon
+    if (state.polygonPoints.length > 0) {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2 / state.zoom;
+        ctx.setLineDash([5 / state.zoom, 5 / state.zoom]);
+
+        ctx.beginPath();
+        ctx.moveTo(state.polygonPoints[0].x, state.polygonPoints[0].y);
+        for (let i = 1; i < state.polygonPoints.length; i++) {
+            ctx.lineTo(state.polygonPoints[i].x, state.polygonPoints[i].y);
+        }
+        ctx.stroke();
+
+        // Draw points
+        ctx.setLineDash([]);
+        state.polygonPoints.forEach((p, i) => {
+            if (i === 0) {
+                // First point is larger to indicate close target
+                ctx.fillStyle = '#3b82f6';
+                ctx.fillRect(p.x - 4/state.zoom, p.y - 4/state.zoom, 8/state.zoom, 8/state.zoom);
+            } else {
+                ctx.fillStyle = '#3b82f6';
+                ctx.fillRect(p.x - 3/state.zoom, p.y - 3/state.zoom, 6/state.zoom, 6/state.zoom);
+            }
+        });
+    }
+
     ctx.restore();
 }
 
-function drawBoundingBox(bbox, color, isSelected, labelText) {
+function drawBoundingBox(bbox, color, isSelected, labelText, polygon = null) {
     const ctx = state.ctx;
 
-    // Box
-    ctx.strokeStyle = isSelected ? '#ffffff' : color;
-    ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
-    ctx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
+    // Draw polygon if available
+    if (polygon && polygon.length > 0) {
+        ctx.strokeStyle = isSelected ? '#ffffff' : color;
+        ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
 
-    // Label background
+        ctx.beginPath();
+        ctx.moveTo(polygon[0].x, polygon[0].y);
+        for (let i = 1; i < polygon.length; i++) {
+            ctx.lineTo(polygon[i].x, polygon[i].y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // Fill with transparency
+        ctx.fillStyle = color + '33';
+        ctx.fill();
+
+        // Draw polygon vertices when selected
+        if (isSelected) {
+            const handleSize = 6 / state.zoom;
+            ctx.fillStyle = '#ffffff';
+            polygon.forEach(p => {
+                ctx.fillRect(p.x - handleSize/2, p.y - handleSize/2, handleSize, handleSize);
+            });
+        }
+    } else {
+        // Draw regular bounding box
+        ctx.strokeStyle = isSelected ? '#ffffff' : color;
+        ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
+        ctx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
+
+        // Resize handles when selected
+        if (isSelected) {
+            const handleSize = 6 / state.zoom;
+            ctx.fillStyle = '#ffffff';
+
+            // Corners
+            ctx.fillRect(bbox.x - handleSize/2, bbox.y - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(bbox.x + bbox.width - handleSize/2, bbox.y - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(bbox.x - handleSize/2, bbox.y + bbox.height - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(bbox.x + bbox.width - handleSize/2, bbox.y + bbox.height - handleSize/2, handleSize, handleSize);
+        }
+    }
+
+    // Label background (always at bbox position)
     if (labelText) {
         ctx.font = `${14 / state.zoom}px sans-serif`;
         const textWidth = ctx.measureText(labelText).width;
@@ -535,18 +601,26 @@ function drawBoundingBox(bbox, color, isSelected, labelText) {
         ctx.fillStyle = '#ffffff';
         ctx.fillText(labelText, bbox.x + padding, bbox.y - (6 / state.zoom));
     }
+}
 
-    // Resize handles when selected
-    if (isSelected) {
-        const handleSize = 6 / state.zoom;
-        ctx.fillStyle = '#ffffff';
+// Helper function to detect which resize handle is being clicked
+function getResizeHandle(point, bbox, tolerance = 8) {
+    const handles = {
+        'nw': {x: bbox.x, y: bbox.y},
+        'ne': {x: bbox.x + bbox.width, y: bbox.y},
+        'se': {x: bbox.x + bbox.width, y: bbox.y + bbox.height},
+        'sw': {x: bbox.x, y: bbox.y + bbox.height},
+        'n': {x: bbox.x + bbox.width/2, y: bbox.y},
+        'e': {x: bbox.x + bbox.width, y: bbox.y + bbox.height/2},
+        's': {x: bbox.x + bbox.width/2, y: bbox.y + bbox.height},
+        'w': {x: bbox.x, y: bbox.y + bbox.height/2}
+    };
 
-        // Corners
-        ctx.fillRect(bbox.x - handleSize/2, bbox.y - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(bbox.x + bbox.width - handleSize/2, bbox.y - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(bbox.x - handleSize/2, bbox.y + bbox.height - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(bbox.x + bbox.width - handleSize/2, bbox.y + bbox.height - handleSize/2, handleSize, handleSize);
+    for (const [name, pos] of Object.entries(handles)) {
+        const dist = Math.sqrt((point.x - pos.x)**2 + (point.y - pos.y)**2);
+        if (dist <= tolerance / state.zoom) return name;
     }
+    return null;
 }
 
 // Mouse Handlers
@@ -555,15 +629,48 @@ function handleMouseDown(e) {
     const x = (e.clientX - rect.left) / state.zoom - state.pan.x / state.zoom;
     const y = (e.clientY - rect.top) / state.zoom - state.pan.y / state.zoom;
 
-    if (state.currentTool === 'bbox') {
+    if (state.currentTool === 'polygon') {
+        const point = {x, y};
+
+        // Check if clicking near first point to close polygon
+        if (state.polygonPoints.length >= 3) {
+            const first = state.polygonPoints[0];
+            const dist = Math.sqrt((x - first.x)**2 + (y - first.y)**2);
+            if (dist <= 10 / state.zoom) {
+                // Close polygon
+                addPolygonAnnotation(state.polygonPoints);
+                state.polygonPoints = [];
+                render();
+                return;
+            }
+        }
+
+        // Add point to polygon
+        state.polygonPoints.push(point);
+        render();
+    } else if (state.currentTool === 'bbox') {
         state.isDrawing = true;
         state.startPoint = { x, y };
         state.currentPoint = { x, y };
     } else if (state.currentTool === 'select') {
-        // Check if clicking on existing annotation
         const currentImageId = state.images[state.currentImageIndex].id;
         const annotations = state.annotations[currentImageId] || [];
 
+        // Check if selected annotation exists and mouse is on a resize handle
+        if (state.selectedAnnotationId !== null) {
+            const selected = annotations[state.selectedAnnotationId];
+            const handle = getResizeHandle({x, y}, selected.bbox);
+
+            if (handle) {
+                state.resizeHandle = handle;
+                state.resizeStartBox = {...selected.bbox};
+                state.isDragging = true;
+                state.startPoint = {x, y};
+                return;
+            }
+        }
+
+        // Otherwise check for selection
         let found = false;
         for (let i = annotations.length - 1; i >= 0; i--) {
             const ann = annotations[i];
@@ -585,17 +692,95 @@ function handleMouseDown(e) {
 }
 
 function handleMouseMove(e) {
-    if (!state.isDrawing) return;
-
     const rect = state.canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) / state.zoom - state.pan.x / state.zoom;
     const y = (e.clientY - rect.top) / state.zoom - state.pan.y / state.zoom;
+
+    // Handle resize
+    if (state.isDragging && state.resizeHandle) {
+        const currentImageId = state.images[state.currentImageIndex].id;
+        const annotations = state.annotations[currentImageId];
+        const selected = annotations[state.selectedAnnotationId];
+        const box = state.resizeStartBox;
+        const dx = x - state.startPoint.x;
+        const dy = y - state.startPoint.y;
+
+        // Calculate new bbox based on handle
+        switch(state.resizeHandle) {
+            case 'nw':
+                selected.bbox = {
+                    x: box.x + dx, y: box.y + dy,
+                    width: box.width - dx, height: box.height - dy
+                };
+                break;
+            case 'ne':
+                selected.bbox = {
+                    x: box.x, y: box.y + dy,
+                    width: box.width + dx, height: box.height - dy
+                };
+                break;
+            case 'se':
+                selected.bbox = {
+                    x: box.x, y: box.y,
+                    width: box.width + dx, height: box.height + dy
+                };
+                break;
+            case 'sw':
+                selected.bbox = {
+                    x: box.x + dx, y: box.y,
+                    width: box.width - dx, height: box.height + dy
+                };
+                break;
+            case 'n':
+                selected.bbox = {
+                    x: box.x, y: box.y + dy,
+                    width: box.width, height: box.height - dy
+                };
+                break;
+            case 'e':
+                selected.bbox = {
+                    x: box.x, y: box.y,
+                    width: box.width + dx, height: box.height
+                };
+                break;
+            case 's':
+                selected.bbox = {
+                    x: box.x, y: box.y,
+                    width: box.width, height: box.height + dy
+                };
+                break;
+            case 'w':
+                selected.bbox = {
+                    x: box.x + dx, y: box.y,
+                    width: box.width - dx, height: box.height
+                };
+                break;
+        }
+
+        render();
+        return;
+    }
+
+    // Handle normal drawing
+    if (!state.isDrawing) return;
 
     state.currentPoint = { x, y };
     render();
 }
 
 function handleMouseUp(e) {
+    // Handle resize completion
+    if (state.isDragging && state.resizeHandle) {
+        state.isDragging = false;
+        state.resizeHandle = null;
+        state.resizeStartBox = null;
+        saveToHistory();
+        renderAnnotationsList();
+        render();
+        return;
+    }
+
+    // Handle normal drawing
     if (!state.isDrawing) return;
 
     const rect = state.canvas.getBoundingClientRect();
@@ -675,6 +860,45 @@ function addAnnotation(bbox, options = {}) {
     renderAnnotationsList();
     renderImageList();
     updateStats();
+}
+
+function addPolygonAnnotation(points) {
+    const currentImageId = state.images[state.currentImageIndex].id;
+
+    if (!state.annotations[currentImageId]) {
+        state.annotations[currentImageId] = [];
+    }
+
+    // Calculate bounding box from polygon
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const bbox = {
+        x: Math.min(...xs),
+        y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs),
+        height: Math.max(...ys) - Math.min(...ys)
+    };
+
+    const annotation = {
+        labelId: state.selectedLabelId,
+        bbox: bbox,
+        polygon: points,  // Store polygon points
+        confidence: 1.0,
+        createdBy: 'manual'
+    };
+
+    state.annotations[currentImageId].push(annotation);
+
+    // Update label count
+    const label = state.labels.find(l => l.id === state.selectedLabelId);
+    if (label) label.count++;
+
+    saveToHistory();
+    renderLabels();
+    renderAnnotationsList();
+    renderImageList();
+    updateStats();
+    render();
 }
 
 function deleteAnnotation(index) {
@@ -970,17 +1194,31 @@ function switchToBoxTool() {
 function setTool(tool) {
     state.currentTool = tool;
 
+    // Reset polygon if switching away
+    if (tool !== 'polygon') {
+        state.polygonPoints = [];
+    }
+
     // Update UI
     document.querySelectorAll('.tool-btn').forEach(btn => {
         btn.classList.remove('active');
     });
     document.querySelector(`[data-tool="${tool}"]`)?.classList.add('active');
 
-    document.getElementById('currentTool').textContent =
-        tool === 'bbox' ? 'Box' : 'Select';
+    const toolNames = {
+        'bbox': 'Box',
+        'select': 'Select',
+        'polygon': 'Polygon'
+    };
+    document.getElementById('currentTool').textContent = toolNames[tool] || tool;
 
     // Update cursor
-    state.canvas.style.cursor = tool === 'bbox' ? 'crosshair' : 'default';
+    const cursors = {
+        'bbox': 'crosshair',
+        'select': 'default',
+        'polygon': 'crosshair'
+    };
+    state.canvas.style.cursor = cursors[tool] || 'default';
 }
 
 // Zoom
@@ -1059,8 +1297,11 @@ function previousImage() {
 // Keyboard Shortcuts
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
+        // Don't trigger if typing in input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
         // Prevent default for our shortcuts
-        const shouldPrevent = ['b', 'v', '0', '+', '-', 'ArrowLeft', 'ArrowRight', 'Delete'].includes(e.key) ||
+        const shouldPrevent = ['a', 'b', 'v', 'p', '0', '+', '-', 'ArrowLeft', 'ArrowRight', 'Delete', 'Escape'].includes(e.key) ||
                              (e.ctrlKey && ['z', 'y'].includes(e.key.toLowerCase()));
 
         if (shouldPrevent) {
@@ -1070,9 +1311,29 @@ function setupKeyboardShortcuts() {
         // Tools
         if (e.key === 'b') setTool('bbox');
         if (e.key === 'v') setTool('select');
+        if (e.key === 'p') setTool('polygon');
 
         // Actions
-        if (e.key === 'Delete') deleteSelected();
+        if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+            aiAutoAnnotate();
+        }
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (!e.ctrlKey && !e.metaKey) {
+                deleteSelected();
+            }
+        }
+        if (e.key === 'Escape') {
+            // Cancel polygon
+            if (state.currentTool === 'polygon' && state.polygonPoints.length > 0) {
+                state.polygonPoints = [];
+                render();
+            } else {
+                // Deselect
+                state.selectedAnnotationId = null;
+                renderAnnotationsList();
+                render();
+            }
+        }
         if (e.ctrlKey && e.key === 'z') undo();
         if (e.ctrlKey && e.key === 'y') redo();
 
@@ -1350,6 +1611,10 @@ async function saveProgress() {
 // Export Annotations
 async function exportAnnotations() {
     try {
+        // Get actual image dimensions (we need to convert from canvas to image coordinates)
+        const imgWidth = state.currentImage ? state.currentImage.width : state.canvas.width;
+        const imgHeight = state.currentImage ? state.currentImage.height : state.canvas.height;
+
         // Convert to YOLO format
         const yoloData = {};
 
@@ -1359,13 +1624,32 @@ async function exportAnnotations() {
 
             const annotations = state.annotations[imageId];
             const yoloLines = annotations.map(ann => {
-                // Convert pixel bbox to normalized YOLO format
-                const centerX = (ann.bbox.x + ann.bbox.width / 2) / state.canvas.width;
-                const centerY = (ann.bbox.y + ann.bbox.height / 2) / state.canvas.height;
-                const width = ann.bbox.width / state.canvas.width;
-                const height = ann.bbox.height / state.canvas.height;
+                if (ann.polygon && ann.polygon.length > 0) {
+                    // Export polygon segmentation format
+                    // Convert canvas coordinates to image coordinates, then normalize
+                    const scaleX = imgWidth / state.canvas.width;
+                    const scaleY = imgHeight / state.canvas.height;
 
-                return `${ann.labelId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`;
+                    const points = ann.polygon.map(p => {
+                        const x_norm = (p.x * scaleX) / imgWidth;
+                        const y_norm = (p.y * scaleY) / imgHeight;
+                        return `${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`;
+                    }).join(' ');
+
+                    return `${ann.labelId} ${points}`;
+                } else {
+                    // Export bbox format (existing code)
+                    // Convert canvas coordinates to image coordinates, then normalize
+                    const scaleX = imgWidth / state.canvas.width;
+                    const scaleY = imgHeight / state.canvas.height;
+
+                    const centerX = ((ann.bbox.x + ann.bbox.width / 2) * scaleX) / imgWidth;
+                    const centerY = ((ann.bbox.y + ann.bbox.height / 2) * scaleY) / imgHeight;
+                    const width = (ann.bbox.width * scaleX) / imgWidth;
+                    const height = (ann.bbox.height * scaleY) / imgHeight;
+
+                    return `${ann.labelId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`;
+                }
             });
 
             yoloData[image.filename] = yoloLines;
