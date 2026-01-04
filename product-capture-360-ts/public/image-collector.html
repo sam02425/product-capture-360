@@ -85,41 +85,11 @@
       padding: 2rem;
     }
 
-    /* Tabs */
-    .tabs {
-      display: flex;
-      gap: 1rem;
-      margin-bottom: 2rem;
-      border-bottom: 2px solid var(--border);
+    /* Sections */
+    .section {
+      display: block;
+      scroll-margin-top: 80px; /* Account for fixed header */
     }
-    .tab {
-      padding: 1rem 2rem;
-      border: none;
-      background: transparent;
-      color: var(--text-dim);
-      cursor: pointer;
-      font-size: 1rem;
-      font-weight: 600;
-      position: relative;
-      transition: all 0.2s;
-    }
-    .tab:hover { color: var(--text); }
-    .tab.active {
-      color: var(--primary);
-    }
-    .tab.active::after {
-      content: '';
-      position: absolute;
-      bottom: -2px;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: var(--primary);
-    }
-
-    /* Tab content */
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
 
     /* Cards */
     .card {
@@ -1500,28 +1470,21 @@
     <div class="nav">
       <button class="nav-btn" onclick="window.location.href='/'">🏠 Home</button>
       <button class="nav-btn active" onclick="window.location.href='/image-collector.html'">📷 Camera</button>
+      <button class="nav-btn" onclick="window.location.href='#augment-section'">🎨 Augmentation</button>
+      <button class="nav-btn" onclick="window.location.href='#generate-section'">⚙️ Generate</button>
+      <button class="nav-btn" onclick="window.location.href='#versions-section'">📦 Versions</button>
       <button class="nav-btn" onclick="window.location.href='/annotator.html'">📝 Annotator</button>
       <button class="nav-btn" onclick="window.location.href='/batch-annotator.html'">🤖 Batch AI</button>
+      <button class="nav-btn" onclick="window.location.href='#docs-section'">📚 Docs</button>
       <button class="nav-btn" onclick="window.location.href='/logs.html'">📋 Logs</button>
-      <button class="nav-btn" onclick="showWelcome()">❓ Help</button>
       <button class="nav-btn" id="statusBadge">🟢 Connected</button>
     </div>
   </div>
 
   <div class="container">
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab active" data-tab="capture" onclick="switchTab('capture')">📸 Capture</button>
-      <button class="tab" data-tab="augment" onclick="switchTab('augment')">🎨 Augmentation</button>
-      <button class="tab" data-tab="annotate" onclick="switchTab('annotate')">🏷️ Annotation</button>
-      <button class="tab" data-tab="visualize" onclick="switchTab('visualize')">🔍 Visualize Dataset</button>
-      <button class="tab" data-tab="generate" onclick="switchTab('generate')">⚙️ Generate Dataset</button>
-      <button class="tab" data-tab="versions" onclick="switchTab('versions')">📦 Versions</button>
-      <button class="tab" data-tab="docs" onclick="switchTab('docs')">📚 Documentation</button>
-    </div>
-
-    <!-- Tab 1: Capture -->
-    <div class="tab-content active" id="capture-tab">
+    <!-- Camera Capture -->
+    <div class="section" id="capture-section">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">📷 Camera Capture</h2>
       <div class="grid grid-2">
         <div class="card">
           <div class="card-title">📷 Camera Setup</div>
@@ -1628,8 +1591,9 @@
       </div>
     </div>
 
-    <!-- Tab 2: Augmentation -->
-    <div class="tab-content" id="augment-tab">
+    <!-- Augmentation Section -->
+    <div class="section" id="augment-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">🎨 Image Augmentation</h2>
       <div class="grid grid-2">
         <div class="card">
           <div class="card-title">🎨 Augmentation Settings</div>
@@ -1831,8 +1795,9 @@
       </div>
     </div>
 
-    <!-- Tab 3: Generate Dataset -->
-    <div class="tab-content" id="generate-tab">
+    <!-- Generate Dataset Section -->
+    <div class="section" id="generate-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">⚙️ Generate Dataset</h2>
       <div class="card">
         <div class="card-title">🚀 Generate Training Dataset</div>
 
@@ -1896,8 +1861,9 @@
       </div>
     </div>
 
-    <!-- Tab 4: Versions -->
-    <div class="tab-content" id="versions-tab">
+    <!-- Dataset Versions Section -->
+    <div class="section" id="versions-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">📦 Dataset Versions</h2>
       <div class="grid grid-2">
         <div class="card">
           <div class="card-title">📦 Dataset Versions</div>
@@ -1934,8 +1900,9 @@
       </div>
     </div>
 
-    <!-- Tab 5: Documentation -->
-    <div class="tab-content" id="docs-tab">
+    <!-- Documentation Section -->
+    <div class="section" id="docs-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">📚 Documentation</h2>
       <div class="card">
         <div class="card-title">📚 Image Collector - Complete Workflow Documentation</div>
         <div class="card-subtitle">Powered by EyeAI - Professional Data Collection & Augmentation Platform</div>
@@ -2149,8 +2116,9 @@
       </div>
     </div>
 
-    <!-- Tab 4: Annotation -->
-    <div class="tab-content" id="annotate-tab">
+    <!-- Annotation Section -->
+    <div class="section" id="annotate-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">🏷️ Image Annotation</h2>
       <!-- Professional Annotator (Embedded) -->
       <iframe src="/annotator.html"
               style="width: 100%; height: calc(100vh - 60px); border: none; display: block;"
@@ -2366,8 +2334,9 @@
       </div>
     </div>
 
-    <!-- Tab: Visualize Dataset -->
-    <div class="tab-content" id="visualize-tab">
+    <!-- Visualize Dataset Section -->
+    <div class="section" id="visualize-section" style="margin-top: 2rem;">
+      <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: var(--text);">🔍 Visualize Dataset</h2>
       <div class="section">
         <h2>🔍 Dataset Visualization</h2>
         <p class="description">

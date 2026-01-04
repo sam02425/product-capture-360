@@ -1,5 +1,7 @@
-import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs/promises';
+import { runPythonScript, parseSubprocessJSON } from './subprocess_utils';
+import { yoloCache } from './ml_cache';
 
 export interface Detection {
   x: number;
@@ -18,7 +20,24 @@ export interface DetectionOptions {
 }
 
 /**
- * Run bottle detection using YOLO
+ * Generate cache key based on image hash and options
+ */
+async function getCacheKey(imagePath: string, options: DetectionOptions): Promise<Record<string, any>> {
+  // Get file modification time and size for quick cache invalidation
+  const stats = await fs.stat(imagePath);
+
+  return {
+    imagePath,
+    mtime: stats.mtimeMs,
+    size: stats.size,
+    model: options.model || 'yolov8-bottle',
+    confidence: options.confidence || 0.85,
+    targetClass: options.targetClass || 'bottle'
+  };
+}
+
+/**
+ * Run bottle detection using YOLO with timeout protection and caching
  */
 export async function runBottleDetection(
   imagePath: string,
@@ -26,42 +45,42 @@ export async function runBottleDetection(
 ): Promise<Detection[]> {
   const { model = 'yolov8-bottle', confidence = 0.85, label = 'bottle', targetClass = 'bottle' } = options;
 
-  return new Promise((resolve, reject) => {
-    // Use Python script to run YOLO detection
-    const pythonScript = path.join(__dirname, '../scripts/detect_bottles.py');
+  // Check cache first
+  const cacheKey = await getCacheKey(imagePath, options);
+  const cached = yoloCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-    const proc = spawn('python3', [
-      pythonScript,
-      '--image', imagePath,
-      '--model', model,
-      '--confidence', confidence.toString(),
-      '--label', label,
-      '--target-class', targetClass
-    ]);
+  // Sanitize parameters to prevent command injection
+  const sanitizeParam = (param: string) => param.replace(/[;&|`$()]/g, '');
 
-    let stdout = '';
-    let stderr = '';
+  const pythonScript = path.join(__dirname, '../scripts/detect_bottles.py');
 
-    proc.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
+  const args = [
+    '--image', imagePath, // Path already validated by caller
+    '--model', sanitizeParam(model),
+    '--confidence', Math.max(0, Math.min(1, confidence)).toString(),
+    '--label', sanitizeParam(label),
+    '--target-class', sanitizeParam(targetClass)
+  ];
 
-    proc.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
+  // Run with 30 second timeout
+  const result = await runPythonScript(
+    pythonScript,
+    args,
+    30000,
+    'YOLO detection'
+  );
 
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || 'Detection failed'));
-        return;
-      }
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || 'Detection failed');
+  }
 
-      try {
-        const detections = JSON.parse(stdout);
-        resolve(detections);
-      } catch (error) {
-        reject(new Error('Failed to parse detection results'));
-      }
-    });
-  });
+  const detections = parseSubprocessJSON<Detection[]>(result.stdout, 'YOLO detection');
+
+  // Cache the result
+  yoloCache.set(cacheKey, detections);
+
+  return detections;
 }

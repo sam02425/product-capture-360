@@ -5,12 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>System Logs - Product Capture 360</title>
     <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a0a;
-            color: #e0e0e0;
+            background: var(--bg-dark);
+            color: var(--text);
             padding: 20px;
         }
 
@@ -248,8 +262,12 @@
             <div style="display: flex; gap: 10px;">
                 <button onclick="window.location.href='/'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🏠 Home</button>
                 <button onclick="window.location.href='/image-collector.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📷 Camera</button>
+                <button onclick="window.location.href='/image-collector.html#augment-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🎨 Augmentation</button>
+                <button onclick="window.location.href='/image-collector.html#generate-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">⚙️ Generate</button>
+                <button onclick="window.location.href='/image-collector.html#versions-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📦 Versions</button>
                 <button onclick="window.location.href='/annotator.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📝 Annotator</button>
                 <button onclick="window.location.href='/batch-annotator.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🤖 Batch AI</button>
+                <button onclick="window.location.href='/image-collector.html#docs-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📚 Docs</button>
                 <button style="cursor: pointer; padding: 10px 20px; background: #3b82f6; border: none; border-radius: 5px; color: white; font-weight: 600;">📋 Logs</button>
             </div>
         </div>

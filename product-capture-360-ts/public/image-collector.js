@@ -35,22 +35,19 @@ const jpost = (url, body) => fetch(url, {
   body: JSON.stringify(body || {}),
 }).then(r => r.json());
 
-// Tab switching
+// Legacy tab switching function - now deprecated since all sections are visible
+// Kept for backwards compatibility with any code that calls it
 window.switchTab = function(tabName) {
-  // Update tab buttons
-  document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-  const clickedTab = document.querySelector(`.tab[data-tab="${tabName}"]`);
-  if (clickedTab) clickedTab.classList.add('active');
+  // Scroll to the section instead of showing/hiding
+  const section = document.getElementById(`${tabName}-section`);
+  if (section) {
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
-  // Update tab content
-  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-  document.getElementById(`${tabName}-tab`).classList.add('active');
-
-  // Load data for specific tabs
+  // Load data for specific sections
   if (tabName === 'versions') {
     loadVersions();
   } else if (tabName === 'augment') {
-    // Don't load source images automatically - wait for folder selection
     updateEstimates();
   } else if (tabName === 'generate') {
     updateEstimates();

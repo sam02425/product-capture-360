@@ -41,10 +41,11 @@ const versionManager = new DatasetVersionManager(process.cwd());
 
 // Helper function to validate file paths (prevent path traversal)
 function isPathSafe(requestedPath: string, baseDir: string): boolean {
-  const resolved = path.resolve(requestedPath);
+  const resolved = path.resolve(baseDir, requestedPath);
   const base = path.resolve(baseDir);
-  // Path must start with base directory (whitelist approach)
-  return resolved.startsWith(base + path.sep) || resolved === base;
+  // Path must start with base directory and not escape via ../ or symlinks
+  const relative = path.relative(base, resolved);
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 // Helper function to sanitize product names
@@ -164,6 +165,113 @@ app.get('/video_feed', async (req: any, reply: any) => {
   const cleanup = () => { try { clearInterval(timer); } catch {} };
   req.raw.on('aborted', cleanup);
   req.raw.on('close', cleanup);
+});
+
+// Health check endpoint
+app.get('/api/health', async () => {
+  const startTime = Date.now();
+
+  try {
+    // Check camera status
+    let cameraStatus = 'healthy';
+    try {
+      await camera.getMetrics();
+    } catch {
+      cameraStatus = 'degraded';
+    }
+
+    // Check storage
+    let storageDevices = 0;
+    try {
+      const devices = await storage.listDevices();
+      storageDevices = devices.length;
+    } catch {
+      storageDevices = 0;
+    }
+
+    // Check session manager
+    const sessionStatus = session.status();
+
+    // Get ML cache stats
+    const { yoloCache, sam2Cache, rembgCache } = await import('./ml_cache');
+    const cacheStats = {
+      yolo: yoloCache.getStats(),
+      sam2: sam2Cache.getStats(),
+      rembg: rembgCache.getStats()
+    };
+
+    const responseTime = Date.now() - startTime;
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage();
+
+    const health = {
+      status: cameraStatus === 'healthy' ? 'healthy' : 'degraded',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(uptime),
+      responseTime,
+      services: {
+        camera: { status: cameraStatus },
+        storage: { status: storageDevices > 0 ? 'healthy' : 'no_devices', devices: storageDevices },
+        session: { status: 'healthy', active: sessionStatus.active || false }
+      },
+      cache: {
+        yolo: { size: cacheStats.yolo.size, maxSize: cacheStats.yolo.maxSize },
+        sam2: { size: cacheStats.sam2.size, maxSize: cacheStats.sam2.maxSize },
+        rembg: { size: cacheStats.rembg.size, maxSize: cacheStats.rembg.maxSize }
+      },
+      memory: {
+        heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+        rss: Math.round(memoryUsage.rss / 1024 / 1024),
+        external: Math.round(memoryUsage.external / 1024 / 1024)
+      },
+      node: {
+        version: process.version,
+        platform: process.platform,
+        arch: process.arch
+      }
+    };
+
+    return health;
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      error: (error as Error).message
+    };
+  }
+});
+
+// Cache statistics endpoint
+app.get('/api/cache/stats', async () => {
+  const { yoloCache, sam2Cache, rembgCache } = await import('./ml_cache');
+
+  return {
+    success: true,
+    caches: {
+      yolo: yoloCache.getStats(),
+      sam2: sam2Cache.getStats(),
+      rembg: rembgCache.getStats()
+    }
+  };
+});
+
+// Clear cache endpoint
+app.post('/api/cache/clear', async (req: any) => {
+  const { yoloCache, sam2Cache, rembgCache } = await import('./ml_cache');
+  const cacheType = req.body?.cache || 'all';
+
+  if (cacheType === 'all' || cacheType === 'yolo') {
+    yoloCache.clear();
+  }
+  if (cacheType === 'all' || cacheType === 'sam2') {
+    sam2Cache.clear();
+  }
+  if (cacheType === 'all' || cacheType === 'rembg') {
+    rembgCache.clear();
+  }
+
+  return { success: true, message: `Cleared ${cacheType} cache(s)` };
 });
 
 app.get('/api/camera/scan', async () => ({ success: true, cameras: await camera.listDevices() }));
@@ -366,14 +474,16 @@ app.get('/api/file', async (req: any, reply: any) => {
   }
 
   // CRITICAL SECURITY: Prevent path traversal attacks
-  // Allow paths from external volumes (/Volumes/) or configured storage
-  const storageBase = storage.currentPath || process.cwd();
-  const isExternalVolume = p.startsWith('/Volumes/');
-  const isInStorage = isPathSafe(p, storageBase);
-
-  if (!isExternalVolume && !isInStorage) {
-    req.log.warn({ requestedPath: p, base: storageBase }, 'Path traversal attempt blocked');
+  // Block any path containing .. sequences to prevent directory traversal
+  if (p.includes('..')) {
+    req.log.warn({ requestedPath: p }, 'Path traversal attempt blocked (.. detected)');
     return reply.status(403).send({ error: 'Access denied' });
+  }
+
+  // Ensure path is absolute (prevents relative path exploits)
+  if (!path.isAbsolute(p)) {
+    req.log.warn({ requestedPath: p }, 'Relative path blocked');
+    return reply.status(403).send({ error: 'Only absolute paths allowed' });
   }
 
   if (!fs.existsSync(p)) {

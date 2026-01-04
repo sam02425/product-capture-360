@@ -5,11 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Batch Annotation - Product Capture 360</title>
     <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--bg-dark);
+            color: var(--text);
             min-height: 100vh;
             padding: 20px;
         }
@@ -20,35 +35,36 @@
         }
 
         .header {
-            background: white;
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
             padding: 30px;
             border-radius: 15px;
             margin-bottom: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
         }
 
         .header h1 {
             font-size: 32px;
-            color: #2d3748;
+            color: white;
             margin-bottom: 10px;
         }
 
         .header p {
-            color: #718096;
+            color: rgba(255, 255, 255, 0.9);
             font-size: 16px;
         }
 
         .card {
-            background: white;
+            background: var(--bg-card);
             border-radius: 15px;
             padding: 30px;
             margin-bottom: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
         }
 
         .card h2 {
             font-size: 24px;
-            color: #2d3748;
+            color: var(--text);
             margin-bottom: 20px;
             display: flex;
             align-items: center;
@@ -63,7 +79,7 @@
             display: block;
             font-size: 14px;
             font-weight: 600;
-            color: #4a5568;
+            color: var(--text);
             margin-bottom: 8px;
         }
 
@@ -71,17 +87,19 @@
         .form-group select {
             width: 100%;
             padding: 12px;
-            border: 2px solid #e2e8f0;
+            background: var(--bg-dark);
+            border: 2px solid var(--border);
             border-radius: 8px;
             font-size: 14px;
+            color: var(--text);
             transition: all 0.3s;
         }
 
         .form-group input:focus,
         .form-group select:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
         }
 
         .form-grid {
@@ -104,31 +122,33 @@
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--primary);
             color: white;
         }
 
         .btn-primary:hover {
+            background: var(--primary-hover);
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3);
         }
 
         .btn-secondary {
-            background: #e2e8f0;
-            color: #4a5568;
+            background: var(--bg-hover);
+            color: var(--text);
+            border: 1px solid var(--border);
         }
 
         .btn-secondary:hover {
-            background: #cbd5e0;
+            background: var(--border);
         }
 
         .btn-danger {
-            background: #f56565;
+            background: var(--danger);
             color: white;
         }
 
         .btn-danger:hover {
-            background: #e53e3e;
+            background: #dc2626;
         }
 
         .btn:disabled {
@@ -499,8 +519,12 @@
                 <div style="display: flex; gap: 10px;">
                     <button class="btn btn-secondary" onclick="window.location.href='/'" style="margin: 0;">🏠 Home</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html'" style="margin: 0;">📷 Camera</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#augment-section'" style="margin: 0;">🎨 Augmentation</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#generate-section'" style="margin: 0;">⚙️ Generate</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#versions-section'" style="margin: 0;">📦 Versions</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'" style="margin: 0;">📝 Annotator</button>
                     <button class="btn btn-primary" style="margin: 0; background: var(--primary); border-color: var(--primary);">🤖 Batch AI</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#docs-section'" style="margin: 0;">📚 Docs</button>
                     <button class="btn btn-secondary" onclick="window.location.href='/logs.html'" style="margin: 0;">📋 Logs</button>
                 </div>
             </div>
@@ -516,7 +540,7 @@
                     <label>Quick Select</label>
                     <select id="storageSelect" onchange="selectStorageDevice()">
                         <option value="">-- Select a location --</option>
-                        <option value="/Volumes/UBUNTU 24_0/360Photo_Captures">/Volumes/UBUNTU 24_0/360Photo_Captures</option>
+                        <option value="/Users/saumil/Desktop/photos/360Photo_Captures">/Users/saumil/Desktop/photos/360Photo_Captures</option>
                         <option value="/Users/saumil/Desktop/photos">/Users/saumil/Desktop/photos</option>
                         <option value="/Users/saumil/Desktop/360Photo">/Users/saumil/Desktop/360Photo</option>
                     </select>
