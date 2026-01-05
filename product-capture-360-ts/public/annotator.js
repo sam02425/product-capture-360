@@ -3,6 +3,98 @@
  * Full-featured bounding box annotation with AI assistance
  */
 
+// ============================================
+// PERFORMANCE UTILITIES
+// ============================================
+
+/**
+ * Throttle function - limits execution rate
+ * @param {Function} func - Function to throttle
+ * @param {number} limit - Minimum time between executions (ms)
+ */
+function throttle(func, limit) {
+    let inThrottle;
+    return function(...args) {
+        if (!inThrottle) {
+            func.apply(this, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    };
+}
+
+/**
+ * Debounce function - delays execution until after calls stop
+ * @param {Function} func - Function to debounce
+ * @param {number} delay - Delay in milliseconds
+ */
+function debounce(func, delay) {
+    let timeoutId;
+    return function(...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => func.apply(this, args), delay);
+    };
+}
+
+/**
+ * Validate bounding box
+ * @param {Object} bbox - Bounding box {x, y, width, height}
+ * @param {number} imageWidth - Image width
+ * @param {number} imageHeight - Image height
+ */
+function validateBoundingBox(bbox, imageWidth, imageHeight) {
+    const errors = [];
+
+    if (bbox.x < 0 || bbox.y < 0) {
+        errors.push('Negative coordinates not allowed');
+    }
+    if (bbox.width <= 0 || bbox.height <= 0) {
+        errors.push('Width and height must be positive');
+    }
+    if (bbox.x + bbox.width > imageWidth || bbox.y + bbox.height > imageHeight) {
+        errors.push('Annotation exceeds image bounds');
+    }
+
+    return {
+        valid: errors.length === 0,
+        errors
+    };
+}
+
+/**
+ * Show toast notification to user
+ * @param {string} message - Message to display
+ * @param {string} type - Type: 'success', 'warning', 'error', 'info'
+ */
+function showToast(message, type = 'info') {
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${type === 'success' ? '#10b981' : type === 'warning' ? '#f59e0b' : type === 'error' ? '#ef4444' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+    `;
+
+    document.body.appendChild(toast);
+
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
 // Global State
 const state = {
     images: [],
@@ -25,11 +117,108 @@ const state = {
     historyIndex: -1,
     canvas: null,
     ctx: null,
+    // Layered canvas optimization
+    imageCanvas: null,      // Static image layer (rarely changes)
+    imageCtx: null,
+    annotationCanvas: null, // Annotation layer (changes frequently)
+    annotationCtx: null,
+    needsImageRedraw: true, // Flag to redraw image layer
     // Resize state
     resizeHandle: null,
     resizeStartBox: null,
     // Polygon state
-    polygonPoints: []
+    polygonPoints: [],
+    // Ellipse state
+    ellipseCenter: null,
+    ellipseRadius: null,
+    // Keypoint state
+    keypointAnnotations: {}, // {imageId: {template, instances: [{keypoints, bbox}]}}
+    selectedKeypointTemplate: 'coco-person',
+    currentKeypointInstance: null,
+    currentKeypointIndex: 0,
+    keypointTemplates: null, // Will be initialized with COCO templates
+    // AI Preview state
+    aiPreviewDetections: [],
+    isPreviewMode: false,
+    selectedPreviewIndices: new Set(),
+    // Video support
+    isVideoMode: false,
+    videoFrames: [],
+    currentFrameIndex: 0,
+    fps: 30,
+    // Object tracking
+    trackingEnabled: false,
+    tracks: {}, // {trackId: {annotations: [{frameId, bbox, ...}], label, color}}
+    nextTrackId: 1,
+    selectedTrackId: null,
+    trackingMode: 'manual', // 'manual' | 'auto'
+    // Augmentation settings
+    augmentations: {
+        enabled: false,
+        brightness: 0,
+        contrast: 0,
+        rotation: 0,
+        flip: { horizontal: false, vertical: false }
+    },
+    // Dataset versioning
+    datasetVersion: '1.0.0',
+    versionHistory: [],
+    // Mask annotation state
+    maskCanvas: null,
+    maskCtx: null,
+    maskLayers: {}, // {imageId: ImageData}
+    brushSize: 20,
+    brushOpacity: 0.7,
+    currentMaskTool: 'brush', // brush | eraser | fill
+    maskColors: {}, // {labelId: rgba color}
+    isMaskDrawing: false
+};
+
+// Keypoint templates for different annotation tasks
+const KEYPOINT_TEMPLATES = {
+    'coco-person': {
+        name: 'COCO Person (17 points)',
+        keypoints: [
+            'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+            'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+            'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+            'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+        ],
+        skeleton: [
+            [15, 13], [13, 11], [16, 14], [14, 12], // legs (1-indexed in COCO, 0-indexed here)
+            [11, 12], [5, 11], [6, 12], // torso
+            [5, 6], [5, 7], [6, 8], [7, 9], [8, 10], // arms
+            [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6] // head
+        ],
+        colors: {
+            visible: '#10b981',
+            occluded: '#f59e0b',
+            notLabeled: '#6b7280'
+        }
+    },
+    'hand': {
+        name: 'Hand (21 points)',
+        keypoints: [
+            'wrist',
+            'thumb_cmc', 'thumb_mcp', 'thumb_ip', 'thumb_tip',
+            'index_mcp', 'index_pip', 'index_dip', 'index_tip',
+            'middle_mcp', 'middle_pip', 'middle_dip', 'middle_tip',
+            'ring_mcp', 'ring_pip', 'ring_dip', 'ring_tip',
+            'pinky_mcp', 'pinky_pip', 'pinky_dip', 'pinky_tip'
+        ],
+        skeleton: [
+            [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+            [0, 5], [5, 6], [6, 7], [7, 8], // index
+            [0, 9], [9, 10], [10, 11], [11, 12], // middle
+            [0, 13], [13, 14], [14, 15], [15, 16], // ring
+            [0, 17], [17, 18], [18, 19], [19, 20] // pinky
+        ],
+        colors: {
+            visible: '#3b82f6',
+            occluded: '#f59e0b',
+            notLabeled: '#6b7280'
+        }
+    }
 };
 
 const ICONS = {
@@ -111,13 +300,40 @@ async function hydrateFromQueryParams() {
     }
 }
 
+// Utility function to convert hex color to rgba
+function hexToRGBA(hex, alpha = 1) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function initializeCanvas() {
+    // Main display canvas (what user sees)
     state.canvas = document.getElementById('annotationCanvas');
     state.ctx = state.canvas.getContext('2d');
 
-    // Mouse events
+    // Create offscreen canvases for layered rendering
+    state.imageCanvas = document.createElement('canvas');
+    state.imageCtx = state.imageCanvas.getContext('2d');
+
+    state.annotationCanvas = document.createElement('canvas');
+    state.annotationCtx = state.annotationCanvas.getContext('2d');
+
+    // Initialize mask canvas
+    state.maskCanvas = document.getElementById('maskCanvas');
+    state.maskCtx = state.maskCanvas.getContext('2d');
+
+    // Initialize mask colors for each label
+    state.labels.forEach(label => {
+        if (!state.maskColors[label.id]) {
+            state.maskColors[label.id] = hexToRGBA(label.color, state.brushOpacity);
+        }
+    });
+
+    // Mouse events with performance optimization
     state.canvas.addEventListener('mousedown', handleMouseDown);
-    state.canvas.addEventListener('mousemove', handleMouseMove);
+    state.canvas.addEventListener('mousemove', throttle(handleMouseMove, 16)); // ~60fps
     state.canvas.addEventListener('mouseup', handleMouseUp);
     state.canvas.addEventListener('wheel', handleWheel, { passive: false });
 
@@ -171,7 +387,7 @@ async function browseStorageFolder(path) {
         const folders = items.filter(item => item.isDirectory);
 
         if (folders.length === 0) {
-            browser.innerHTML = '<div style="padding: 20px 10px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">No subfolders found</div>';
+            browser.innerHTML = '<div style="padding: 20px 10px; text-align: center; color: #4a5568; font-size: 0.75rem;">No subfolders found</div>';
             return;
         }
 
@@ -182,7 +398,7 @@ async function browseStorageFolder(path) {
             </div>
         `).join('');
     } catch (error) {
-        browser.innerHTML = `<div style="padding: 20px 10px; text-align: center; color: var(--danger); font-size: 0.75rem;">Error: ${error.message}</div>`;
+        browser.innerHTML = `<div style="padding: 20px 10px; text-align: center; color: #dc2626; font-size: 0.75rem;">Error: ${error.message}</div>`;
         console.error('Failed to browse folder:', error);
     }
 }
@@ -398,6 +614,13 @@ async function loadImage(index) {
     const img = new Image();
     img.onload = () => {
         state.currentImage = img;
+
+        // Initialize mask layer for this image if it doesn't exist
+        if (!state.maskLayers[imageData.id]) {
+            const maskData = state.maskCtx.createImageData(state.canvas.width, state.canvas.height);
+            state.maskLayers[imageData.id] = maskData;
+        }
+
         resizeCanvas();
         render();
         renderImageList();
@@ -462,24 +685,75 @@ function resizeCanvas() {
 
     state.canvas.width = width;
     state.canvas.height = height;
+
+    // Resize offscreen canvases to match
+    state.imageCanvas.width = width;
+    state.imageCanvas.height = height;
+    state.annotationCanvas.width = width;
+    state.annotationCanvas.height = height;
+
+    // Resize mask canvas to match
+    if (state.maskCanvas) {
+        state.maskCanvas.width = width;
+        state.maskCanvas.height = height;
+    }
+
+    // Flag that image layer needs redraw
+    state.needsImageRedraw = true;
 }
 
-function render() {
-    if (!state.currentImage || !state.ctx) return;
+/**
+ * Render image layer (rarely changes - only on zoom/pan or image load)
+ */
+function renderImageLayer() {
+    if (!state.needsImageRedraw || !state.currentImage) return;
 
-    const ctx = state.ctx;
-    const canvas = state.canvas;
+    const ctx = state.imageCtx;
+    const canvas = state.imageCanvas;
 
-    // Clear canvas
+    // Clear
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Apply zoom and pan
+    // Apply transforms
     ctx.save();
     ctx.translate(state.pan.x, state.pan.y);
     ctx.scale(state.zoom, state.zoom);
 
     // Draw image
     ctx.drawImage(state.currentImage, 0, 0, canvas.width, canvas.height);
+
+    ctx.restore();
+
+    state.needsImageRedraw = false;
+}
+
+/**
+ * Optimized render function using layered canvases
+ */
+function render() {
+    if (!state.currentImage || !state.ctx) return;
+
+    // Render image layer if needed (zoom/pan/new image)
+    renderImageLayer();
+
+    const ctx = state.ctx;
+    const canvas = state.canvas;
+    const annCtx = state.annotationCtx;
+    const annCanvas = state.annotationCanvas;
+
+    // Clear main canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw image layer to main canvas
+    ctx.drawImage(state.imageCanvas, 0, 0);
+
+    // Clear annotation layer
+    annCtx.clearRect(0, 0, annCanvas.width, annCanvas.height);
+
+    // Apply transforms to annotation layer
+    annCtx.save();
+    annCtx.translate(state.pan.x, state.pan.y);
+    annCtx.scale(state.zoom, state.zoom);
 
     // Draw existing annotations
     const currentImageId = state.images[state.currentImageIndex].id;
@@ -490,8 +764,58 @@ function render() {
         const color = label ? label.color : '#3b82f6';
         const isSelected = state.selectedAnnotationId === idx;
 
-        drawBoundingBox(ann.bbox, color, isSelected, label ? label.name : '', ann.polygon);
+        drawBoundingBox(ann.bbox, color, isSelected, label ? label.name : '', ann.polygon, ann.ellipse, ann.confidence, ann.trackId);
     });
+
+    // Draw AI preview detections
+    if (state.isPreviewMode && state.aiPreviewDetections.length > 0) {
+        state.aiPreviewDetections.forEach((det, idx) => {
+            const isSelectedPreview = state.selectedPreviewIndices.has(idx);
+            const previewColor = isSelectedPreview ? '#10b981' : '#f59e0b'; // Green if selected, amber otherwise
+            const opacity = isSelectedPreview ? '88' : '44';
+
+            annCtx.strokeStyle = previewColor;
+            annCtx.lineWidth = 2 / state.zoom;
+            annCtx.setLineDash([10 / state.zoom, 5 / state.zoom]);
+            annCtx.strokeRect(det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
+            annCtx.setLineDash([]);
+
+            // Fill with transparency
+            annCtx.fillStyle = previewColor + opacity;
+            annCtx.fillRect(det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
+
+            // Confidence badge
+            annCtx.font = `${12 / state.zoom}px sans-serif`;
+            const confText = `${(det.confidence * 100).toFixed(0)}%`;
+            const textWidth = annCtx.measureText(confText).width;
+            const padding = 4 / state.zoom;
+
+            annCtx.fillStyle = previewColor;
+            annCtx.fillRect(
+                det.bbox.x + det.bbox.width - textWidth - padding * 2,
+                det.bbox.y,
+                textWidth + padding * 2,
+                16 / state.zoom
+            );
+
+            annCtx.fillStyle = '#ffffff';
+            annCtx.fillText(
+                confText,
+                det.bbox.x + det.bbox.width - textWidth - padding,
+                det.bbox.y + 12 / state.zoom
+            );
+
+            // Checkbox indicator
+            if (isSelectedPreview) {
+                const checkSize = 16 / state.zoom;
+                annCtx.fillStyle = '#10b981';
+                annCtx.fillRect(det.bbox.x, det.bbox.y, checkSize, checkSize);
+                annCtx.fillStyle = '#ffffff';
+                annCtx.font = `bold ${12 / state.zoom}px sans-serif`;
+                annCtx.fillText('✓', det.bbox.x + 3 / state.zoom, det.bbox.y + 12 / state.zoom);
+            }
+        });
+    }
 
     // Draw current drawing
     if (state.isDrawing && state.startPoint && state.currentPoint) {
@@ -505,48 +829,138 @@ function render() {
             height: Math.abs(state.currentPoint.y - state.startPoint.y)
         };
 
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2 / state.zoom;
-        ctx.setLineDash([5 / state.zoom, 5 / state.zoom]);
-        ctx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
-        ctx.setLineDash([]);
+        annCtx.strokeStyle = color;
+        annCtx.lineWidth = 2 / state.zoom;
+        annCtx.setLineDash([5 / state.zoom, 5 / state.zoom]);
+        annCtx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
+        annCtx.setLineDash([]);
     }
 
     // Draw in-progress polygon
     if (state.polygonPoints.length > 0) {
-        ctx.strokeStyle = '#3b82f6';
-        ctx.lineWidth = 2 / state.zoom;
-        ctx.setLineDash([5 / state.zoom, 5 / state.zoom]);
+        annCtx.strokeStyle = '#3b82f6';
+        annCtx.lineWidth = 2 / state.zoom;
+        annCtx.setLineDash([5 / state.zoom, 5 / state.zoom]);
 
-        ctx.beginPath();
-        ctx.moveTo(state.polygonPoints[0].x, state.polygonPoints[0].y);
+        annCtx.beginPath();
+        annCtx.moveTo(state.polygonPoints[0].x, state.polygonPoints[0].y);
         for (let i = 1; i < state.polygonPoints.length; i++) {
-            ctx.lineTo(state.polygonPoints[i].x, state.polygonPoints[i].y);
+            annCtx.lineTo(state.polygonPoints[i].x, state.polygonPoints[i].y);
         }
-        ctx.stroke();
+        annCtx.stroke();
 
         // Draw points
-        ctx.setLineDash([]);
+        annCtx.setLineDash([]);
         state.polygonPoints.forEach((p, i) => {
             if (i === 0) {
                 // First point is larger to indicate close target
-                ctx.fillStyle = '#3b82f6';
-                ctx.fillRect(p.x - 4/state.zoom, p.y - 4/state.zoom, 8/state.zoom, 8/state.zoom);
+                annCtx.fillStyle = '#3b82f6';
+                annCtx.fillRect(p.x - 4/state.zoom, p.y - 4/state.zoom, 8/state.zoom, 8/state.zoom);
             } else {
-                ctx.fillStyle = '#3b82f6';
-                ctx.fillRect(p.x - 3/state.zoom, p.y - 3/state.zoom, 6/state.zoom, 6/state.zoom);
+                annCtx.fillStyle = '#3b82f6';
+                annCtx.fillRect(p.x - 3/state.zoom, p.y - 3/state.zoom, 6/state.zoom, 6/state.zoom);
             }
         });
     }
 
-    ctx.restore();
+    // Draw in-progress ellipse
+    if (state.currentTool === 'ellipse' && state.isDrawing && state.startPoint && state.currentPoint) {
+        const radiusX = Math.abs(state.currentPoint.x - state.startPoint.x);
+        const radiusY = Math.abs(state.currentPoint.y - state.startPoint.y);
+
+        annCtx.strokeStyle = '#3b82f6';
+        annCtx.lineWidth = 2 / state.zoom;
+        annCtx.setLineDash([5 / state.zoom, 5 / state.zoom]);
+
+        annCtx.beginPath();
+        annCtx.ellipse(state.startPoint.x, state.startPoint.y, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        annCtx.stroke();
+
+        // Draw center point
+        annCtx.setLineDash([]);
+        annCtx.fillStyle = '#3b82f6';
+        annCtx.fillRect(state.startPoint.x - 3/state.zoom, state.startPoint.y - 3/state.zoom, 6/state.zoom, 6/state.zoom);
+    }
+
+    // Draw keypoint annotations
+    const keypointData = state.keypointAnnotations[currentImageId];
+    if (keypointData && keypointData.instances) {
+        const template = KEYPOINT_TEMPLATES[keypointData.template];
+        if (template) {
+            keypointData.instances.forEach((instance, idx) => {
+                const isSelected = false; // TODO: Add selection support
+                drawSkeleton(instance, template, isSelected);
+            });
+        }
+    }
+
+    // Restore annotation layer context
+    annCtx.restore();
+
+    // Composite annotation layer onto main canvas
+    ctx.drawImage(annCanvas, 0, 0);
+
+    // Render mask layer
+    renderMaskLayer();
 }
 
-function drawBoundingBox(bbox, color, isSelected, labelText, polygon = null) {
-    const ctx = state.ctx;
+function renderMaskLayer() {
+    if (!state.maskCanvas || !state.maskCtx || !state.currentImage) return;
 
+    const maskCtx = state.maskCtx;
+    const maskCanvas = state.maskCanvas;
+
+    // Clear mask canvas
+    maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+    // Get current image's mask data
+    const currentImageId = state.images[state.currentImageIndex]?.id;
+    if (!currentImageId || !state.maskLayers[currentImageId]) return;
+
+    // Apply zoom and pan to mask canvas
+    maskCtx.save();
+    maskCtx.translate(state.pan.x, state.pan.y);
+    maskCtx.scale(state.zoom, state.zoom);
+
+    // Draw the mask ImageData
+    maskCtx.putImageData(state.maskLayers[currentImageId], 0, 0);
+
+    maskCtx.restore();
+}
+
+function drawBoundingBox(bbox, color, isSelected, labelText, polygon = null, ellipse = null, confidence = null, trackId = null) {
+    const ctx = state.annotationCtx || state.ctx; // Use annotation layer context if available
+
+    // Draw ellipse if available
+    if (ellipse) {
+        ctx.strokeStyle = isSelected ? '#ffffff' : color;
+        ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
+
+        ctx.beginPath();
+        ctx.ellipse(ellipse.center.x, ellipse.center.y, ellipse.radiusX, ellipse.radiusY, 0, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        // Fill with transparency
+        ctx.fillStyle = color + '33';
+        ctx.fill();
+
+        // Draw center and radius handles when selected
+        if (isSelected) {
+            const handleSize = 6 / state.zoom;
+            ctx.fillStyle = '#ffffff';
+
+            // Center handle
+            ctx.fillRect(ellipse.center.x - handleSize/2, ellipse.center.y - handleSize/2, handleSize, handleSize);
+
+            // Radius handles (4 cardinal points)
+            ctx.fillRect(ellipse.center.x + ellipse.radiusX - handleSize/2, ellipse.center.y - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(ellipse.center.x - ellipse.radiusX - handleSize/2, ellipse.center.y - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(ellipse.center.x - handleSize/2, ellipse.center.y + ellipse.radiusY - handleSize/2, handleSize, handleSize);
+            ctx.fillRect(ellipse.center.x - handleSize/2, ellipse.center.y - ellipse.radiusY - handleSize/2, handleSize, handleSize);
+        }
+    }
     // Draw polygon if available
-    if (polygon && polygon.length > 0) {
+    else if (polygon && polygon.length > 0) {
         ctx.strokeStyle = isSelected ? '#ffffff' : color;
         ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
 
@@ -589,17 +1003,20 @@ function drawBoundingBox(bbox, color, isSelected, labelText, polygon = null) {
         }
     }
 
-    // Label background (always at bbox position)
+    // Label background with confidence and track ID (always at bbox position)
     if (labelText) {
         ctx.font = `${14 / state.zoom}px sans-serif`;
-        const textWidth = ctx.measureText(labelText).width;
+        const confText = confidence ? ` (${(confidence * 100).toFixed(0)}%)` : '';
+        const trackText = trackId !== null && trackId !== undefined && state.trackingEnabled ? ` [T${trackId}]` : '';
+        const fullText = labelText + confText + trackText;
+        const textWidth = ctx.measureText(fullText).width;
         const padding = 4 / state.zoom;
 
         ctx.fillStyle = color;
         ctx.fillRect(bbox.x, bbox.y - (20 / state.zoom), textWidth + padding * 2, 20 / state.zoom);
 
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(labelText, bbox.x + padding, bbox.y - (6 / state.zoom));
+        ctx.fillText(fullText, bbox.x + padding, bbox.y - (6 / state.zoom));
     }
 }
 
@@ -629,6 +1046,31 @@ function handleMouseDown(e) {
     const x = (e.clientX - rect.left) / state.zoom - state.pan.x / state.zoom;
     const y = (e.clientY - rect.top) / state.zoom - state.pan.y / state.zoom;
 
+    // Handle preview mode clicks
+    if (state.isPreviewMode) {
+        // Check if clicking on a preview detection
+        for (let i = state.aiPreviewDetections.length - 1; i >= 0; i--) {
+            const det = state.aiPreviewDetections[i];
+            if (isPointInBox({ x, y }, det.bbox)) {
+                togglePreviewSelection(i);
+                return;
+            }
+        }
+    }
+
+    // Handle mask tools (brush, eraser, fill)
+    if (state.currentTool === 'brush' || state.currentTool === 'eraser') {
+        state.isMaskDrawing = true;
+        const isErasing = state.currentTool === 'eraser';
+        drawMaskBrush(x, y, isErasing);
+        return;
+    }
+
+    if (state.currentTool === 'fill') {
+        floodFill(x, y);
+        return;
+    }
+
     if (state.currentTool === 'polygon') {
         const point = {x, y};
 
@@ -648,6 +1090,14 @@ function handleMouseDown(e) {
         // Add point to polygon
         state.polygonPoints.push(point);
         render();
+    } else if (state.currentTool === 'keypoint') {
+        // Add keypoint at click position
+        addKeypoint(x, y);
+        return;
+    } else if (state.currentTool === 'ellipse') {
+        state.isDrawing = true;
+        state.startPoint = { x, y };
+        state.currentPoint = { x, y };
     } else if (state.currentTool === 'bbox') {
         state.isDrawing = true;
         state.startPoint = { x, y };
@@ -695,6 +1145,13 @@ function handleMouseMove(e) {
     const rect = state.canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) / state.zoom - state.pan.x / state.zoom;
     const y = (e.clientY - rect.top) / state.zoom - state.pan.y / state.zoom;
+
+    // Handle mask drawing (brush/eraser)
+    if (state.isMaskDrawing && (state.currentTool === 'brush' || state.currentTool === 'eraser')) {
+        const isErasing = state.currentTool === 'eraser';
+        drawMaskBrush(x, y, isErasing);
+        return;
+    }
 
     // Handle resize
     if (state.isDragging && state.resizeHandle) {
@@ -769,6 +1226,13 @@ function handleMouseMove(e) {
 }
 
 function handleMouseUp(e) {
+    // Handle mask drawing completion
+    if (state.isMaskDrawing) {
+        state.isMaskDrawing = false;
+        saveToHistory();
+        return;
+    }
+
     // Handle resize completion
     if (state.isDragging && state.resizeHandle) {
         state.isDragging = false;
@@ -787,16 +1251,28 @@ function handleMouseUp(e) {
     const x = (e.clientX - rect.left) / state.zoom - state.pan.x / state.zoom;
     const y = (e.clientY - rect.top) / state.zoom - state.pan.y / state.zoom;
 
-    const bbox = {
-        x: Math.min(state.startPoint.x, x),
-        y: Math.min(state.startPoint.y, y),
-        width: Math.abs(x - state.startPoint.x),
-        height: Math.abs(y - state.startPoint.y)
-    };
+    if (state.currentTool === 'ellipse') {
+        // Create ellipse annotation
+        const radiusX = Math.abs(x - state.startPoint.x);
+        const radiusY = Math.abs(y - state.startPoint.y);
 
-    // Only add if box is large enough
-    if (bbox.width > 10 && bbox.height > 10) {
-        addAnnotation(bbox);
+        // Only add if ellipse is large enough
+        if (radiusX > 5 && radiusY > 5) {
+            addEllipseAnnotation(state.startPoint, radiusX, radiusY);
+        }
+    } else {
+        // Create bbox annotation
+        const bbox = {
+            x: Math.min(state.startPoint.x, x),
+            y: Math.min(state.startPoint.y, y),
+            width: Math.abs(x - state.startPoint.x),
+            height: Math.abs(y - state.startPoint.y)
+        };
+
+        // Only add if box is large enough
+        if (bbox.width > 10 && bbox.height > 10) {
+            addAnnotation(bbox);
+        }
     }
 
     state.isDrawing = false;
@@ -808,10 +1284,33 @@ function handleMouseUp(e) {
 function handleWheel(e) {
     e.preventDefault();
 
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newZoom = Math.max(0.1, Math.min(5, state.zoom * delta));
+    // Smoother, more precise zoom for annotation work
+    const delta = e.deltaY > 0 ? 0.95 : 1.05;
+    const newZoom = Math.max(0.1, Math.min(10, state.zoom * delta));
 
+    // Zoom towards mouse cursor position
+    const rect = state.canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Calculate the point in image coordinates before zoom
+    const beforeX = (mouseX - state.pan.x) / state.zoom;
+    const beforeY = (mouseY - state.pan.y) / state.zoom;
+
+    // Update zoom
     state.zoom = newZoom;
+
+    // Calculate the point in image coordinates after zoom
+    const afterX = (mouseX - state.pan.x) / state.zoom;
+    const afterY = (mouseY - state.pan.y) / state.zoom;
+
+    // Adjust pan to keep the mouse position fixed
+    state.pan.x += (afterX - beforeX) * state.zoom;
+    state.pan.y += (afterY - beforeY) * state.zoom;
+
+    // Mark that image layer needs redraw due to zoom/pan change
+    state.needsImageRedraw = true;
+
     render();
 }
 
@@ -837,6 +1336,14 @@ function handleTouchEnd(e) {
 function addAnnotation(bbox, options = {}) {
     const currentImageId = state.images[state.currentImageIndex].id;
     const { labelId = state.selectedLabelId, confidence = 1.0, createdBy = 'manual' } = options;
+
+    // Validate bounding box before adding
+    const validation = validateBoundingBox(bbox, state.canvas.width, state.canvas.height);
+    if (!validation.valid) {
+        console.warn('Invalid annotation rejected:', validation.errors);
+        showToast(`Invalid annotation: ${validation.errors.join(', ')}`, 'warning');
+        return false; // Annotation rejected
+    }
 
     if (!state.annotations[currentImageId]) {
         state.annotations[currentImageId] = [];
@@ -901,6 +1408,178 @@ function addPolygonAnnotation(points) {
     render();
 }
 
+function addEllipseAnnotation(center, radiusX, radiusY) {
+    const currentImageId = state.images[state.currentImageIndex].id;
+
+    if (!state.annotations[currentImageId]) {
+        state.annotations[currentImageId] = [];
+    }
+
+    // Calculate bounding box from ellipse
+    const bbox = {
+        x: center.x - radiusX,
+        y: center.y - radiusY,
+        width: radiusX * 2,
+        height: radiusY * 2
+    };
+
+    const annotation = {
+        labelId: state.selectedLabelId,
+        bbox: bbox,
+        ellipse: { center, radiusX, radiusY },  // Store ellipse parameters
+        confidence: 1.0,
+        createdBy: 'manual'
+    };
+
+    state.annotations[currentImageId].push(annotation);
+
+    // Update label count
+    const label = state.labels.find(l => l.id === state.selectedLabelId);
+    if (label) label.count++;
+
+    saveToHistory();
+    renderLabels();
+    renderAnnotationsList();
+    renderImageList();
+    updateStats();
+    render();
+}
+
+// Keypoint Annotation Functions
+function startNewKeypointInstance() {
+    const currentImageId = state.images[state.currentImageIndex].id;
+    const template = KEYPOINT_TEMPLATES[state.selectedKeypointTemplate];
+
+    if (!state.keypointAnnotations[currentImageId]) {
+        state.keypointAnnotations[currentImageId] = {
+            template: state.selectedKeypointTemplate,
+            instances: []
+        };
+    }
+
+    // Create new instance with empty keypoints array
+    const newInstance = {
+        keypoints: new Array(template.keypoints.length).fill(null),
+        bbox: null,
+        labelId: state.selectedLabelId
+    };
+
+    state.keypointAnnotations[currentImageId].instances.push(newInstance);
+    state.currentKeypointInstance = newInstance;
+    state.currentKeypointIndex = 0;
+
+    render();
+}
+
+function addKeypoint(x, y) {
+    if (!state.currentKeypointInstance) {
+        startNewKeypointInstance();
+    }
+
+    const template = KEYPOINT_TEMPLATES[state.selectedKeypointTemplate];
+
+    if (state.currentKeypointIndex >= template.keypoints.length) {
+        // All keypoints placed, start new instance
+        startNewKeypointInstance();
+    }
+
+    // Add keypoint at current index
+    state.currentKeypointInstance.keypoints[state.currentKeypointIndex] = {
+        x: x,
+        y: y,
+        visibility: 2 // 0=not labeled, 1=occluded, 2=visible
+    };
+
+    // Move to next keypoint
+    state.currentKeypointIndex++;
+
+    // Update bounding box
+    updateKeypointBbox(state.currentKeypointInstance);
+
+    saveToHistory();
+    render();
+}
+
+function updateKeypointBbox(instance) {
+    const points = instance.keypoints.filter(kp => kp !== null);
+
+    if (points.length === 0) {
+        instance.bbox = null;
+        return;
+    }
+
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+
+    instance.bbox = {
+        x: Math.min(...xs) - 10,
+        y: Math.min(...ys) - 10,
+        width: Math.max(...xs) - Math.min(...xs) + 20,
+        height: Math.max(...ys) - Math.min(...ys) + 20
+    };
+}
+
+function drawSkeleton(instance, template, isSelected = false) {
+    const ctx = state.ctx;
+    const colors = template.colors;
+
+    // Draw skeleton lines
+    template.skeleton.forEach(([idx1, idx2]) => {
+        const kp1 = instance.keypoints[idx1];
+        const kp2 = instance.keypoints[idx2];
+
+        if (kp1 && kp2 && kp1.visibility > 0 && kp2.visibility > 0) {
+            ctx.strokeStyle = kp1.visibility === 2 && kp2.visibility === 2
+                ? colors.visible
+                : colors.occluded;
+            ctx.lineWidth = (isSelected ? 3 : 2) / state.zoom;
+
+            ctx.beginPath();
+            ctx.moveTo(kp1.x, kp1.y);
+            ctx.lineTo(kp2.x, kp2.y);
+            ctx.stroke();
+        }
+    });
+
+    // Draw keypoint circles
+    instance.keypoints.forEach((kp, idx) => {
+        if (kp && kp.visibility > 0) {
+            const radius = 5 / state.zoom;
+
+            // Fill circle
+            ctx.fillStyle = kp.visibility === 2 ? colors.visible : colors.occluded;
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // White outline
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2 / state.zoom;
+            ctx.stroke();
+
+            // Draw keypoint label if selected
+            if (isSelected) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${12 / state.zoom}px sans-serif`;
+                const label = template.keypoints[idx];
+                ctx.fillText(label, kp.x + 8 / state.zoom, kp.y - 8 / state.zoom);
+            }
+        }
+    });
+
+    // Highlight next keypoint to place
+    if (state.currentKeypointInstance === instance && state.currentKeypointIndex < instance.keypoints.length) {
+        const nextIdx = state.currentKeypointIndex;
+        const template_kp = KEYPOINT_TEMPLATES[state.selectedKeypointTemplate];
+
+        // Show indicator for next keypoint
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.3)';
+        ctx.font = `${14 / state.zoom}px sans-serif`;
+        const text = `Next: ${template_kp.keypoints[nextIdx]} (${nextIdx + 1}/${template_kp.keypoints.length})`;
+        ctx.fillText(text, 10, 30);
+    }
+}
+
 function deleteAnnotation(index) {
     const currentImageId = state.images[state.currentImageIndex].id;
     const annotations = state.annotations[currentImageId];
@@ -951,6 +1630,10 @@ function renderLabels() {
     `).join('');
 }
 
+/**
+ * Optimized annotation list rendering using DocumentFragment
+ * Avoids expensive innerHTML reflows
+ */
 function renderAnnotationsList() {
     const container = document.getElementById('annotationsList');
     const currentImageId = state.images[state.currentImageIndex]?.id;
@@ -967,30 +1650,52 @@ function renderAnnotationsList() {
         return;
     }
 
-    container.innerHTML = annotations.map((ann, idx) => {
+    // Use DocumentFragment for batch DOM updates (single reflow)
+    const fragment = document.createDocumentFragment();
+
+    annotations.forEach((ann, idx) => {
         const label = state.labels.find(l => l.id === ann.labelId);
         const isSelected = state.selectedAnnotationId === idx;
 
-        return `
-            <div class="annotation-card ${isSelected ? 'selected' : ''}"
-                 onclick="selectAnnotation(${idx})">
-                <div class="annotation-header">
-                    <div class="annotation-label" style="color: ${label ? label.color : '#3b82f6'};">
-                        ${label ? label.name : 'Unknown'}
-                    </div>
-                    <div class="annotation-actions">
-                        <button class="icon-btn delete" onclick="event.stopPropagation(); deleteAnnotation(${idx})">
-                            ${ICONS.trash}
-                        </button>
-                    </div>
-                </div>
-                <div class="annotation-coords">
-                    x: ${Math.round(ann.bbox.x)}, y: ${Math.round(ann.bbox.y)}<br>
-                    w: ${Math.round(ann.bbox.width)}, h: ${Math.round(ann.bbox.height)}
-                </div>
-            </div>
-        `;
-    }).join('');
+        // Create elements directly (faster than innerHTML parsing)
+        const card = document.createElement('div');
+        card.className = `annotation-card${isSelected ? ' selected' : ''}`;
+        card.onclick = () => selectAnnotation(idx);
+
+        const header = document.createElement('div');
+        header.className = 'annotation-header';
+
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'annotation-label';
+        labelDiv.style.color = label ? label.color : '#3b82f6';
+        labelDiv.textContent = label ? label.name : 'Unknown';
+
+        const actions = document.createElement('div');
+        actions.className = 'annotation-actions';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'icon-btn delete';
+        deleteBtn.innerHTML = ICONS.trash;
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteAnnotation(idx);
+        };
+
+        const coords = document.createElement('div');
+        coords.className = 'annotation-coords';
+        coords.innerHTML = `x: ${Math.round(ann.bbox.x)}, y: ${Math.round(ann.bbox.y)}<br>w: ${Math.round(ann.bbox.width)}, h: ${Math.round(ann.bbox.height)}`;
+
+        // Assemble DOM tree
+        actions.appendChild(deleteBtn);
+        header.appendChild(labelDiv);
+        header.appendChild(actions);
+        card.appendChild(header);
+        card.appendChild(coords);
+        fragment.appendChild(card);
+    });
+
+    // Single DOM update (single reflow)
+    container.replaceChildren(fragment);
 
     document.getElementById('annotationCount').textContent = annotations.length;
 }
@@ -1005,6 +1710,7 @@ function selectAnnotation(index) {
     renderAnnotationsList();
     render();
     updateSam2Hint();
+    updateTrackingUI(); // Update tracking buttons when selection changes
 }
 
 function addNewLabel() {
@@ -1199,6 +1905,12 @@ function setTool(tool) {
         state.polygonPoints = [];
     }
 
+    // Show/hide mask tool controls
+    const maskToolControls = document.getElementById('maskToolControls');
+    if (maskToolControls) {
+        maskToolControls.style.display = ['brush', 'eraser', 'fill'].includes(tool) ? 'block' : 'none';
+    }
+
     // Update UI
     document.querySelectorAll('.tool-btn').forEach(btn => {
         btn.classList.remove('active');
@@ -1208,7 +1920,12 @@ function setTool(tool) {
     const toolNames = {
         'bbox': 'Box',
         'select': 'Select',
-        'polygon': 'Polygon'
+        'polygon': 'Polygon',
+        'ellipse': 'Ellipse',
+        'keypoint': 'Keypoint',
+        'brush': 'Brush',
+        'eraser': 'Eraser',
+        'fill': 'Fill'
     };
     document.getElementById('currentTool').textContent = toolNames[tool] || tool;
 
@@ -1216,25 +1933,180 @@ function setTool(tool) {
     const cursors = {
         'bbox': 'crosshair',
         'select': 'default',
-        'polygon': 'crosshair'
+        'polygon': 'crosshair',
+        'ellipse': 'crosshair',
+        'keypoint': 'crosshair',
+        'brush': 'crosshair',
+        'eraser': 'crosshair',
+        'fill': 'crosshair'
     };
     state.canvas.style.cursor = cursors[tool] || 'default';
 }
 
-// Zoom
+// Mask tool control functions
+function updateBrushSize(value) {
+    state.brushSize = parseInt(value);
+    document.getElementById('brushSizeValue').textContent = value;
+}
+
+function updateBrushOpacity(value) {
+    state.brushOpacity = parseInt(value) / 100;
+    document.getElementById('brushOpacityValue').textContent = value;
+
+    // Update mask colors with new opacity
+    state.labels.forEach(label => {
+        state.maskColors[label.id] = hexToRGBA(label.color, state.brushOpacity);
+    });
+}
+
+// Mask drawing functions
+function drawMaskBrush(x, y, isErasing = false) {
+    if (!state.maskCtx || !state.currentImage) return;
+
+    const currentImageId = state.images[state.currentImageIndex]?.id;
+    if (!currentImageId) return;
+
+    // Ensure mask layer exists
+    if (!state.maskLayers[currentImageId]) {
+        state.maskLayers[currentImageId] = state.maskCtx.createImageData(state.canvas.width, state.canvas.height);
+    }
+
+    const maskData = state.maskLayers[currentImageId];
+    const label = state.labels.find(l => l.id === state.selectedLabelId);
+    if (!label && !isErasing) return;
+
+    // Get color components
+    let r = 0, g = 0, b = 0, a = 0;
+    if (!isErasing) {
+        const color = label.color;
+        r = parseInt(color.slice(1, 3), 16);
+        g = parseInt(color.slice(3, 5), 16);
+        b = parseInt(color.slice(5, 7), 16);
+        a = Math.floor(state.brushOpacity * 255);
+    }
+
+    // Draw circular brush
+    const radius = state.brushSize / state.zoom;
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= radius) {
+                const px = Math.floor(x + dx);
+                const py = Math.floor(y + dy);
+
+                if (px >= 0 && px < maskData.width && py >= 0 && py < maskData.height) {
+                    const idx = (py * maskData.width + px) * 4;
+                    maskData.data[idx] = r;
+                    maskData.data[idx + 1] = g;
+                    maskData.data[idx + 2] = b;
+                    maskData.data[idx + 3] = a;
+                }
+            }
+        }
+    }
+
+    state.maskLayers[currentImageId] = maskData;
+    render();
+}
+
+// Flood fill (bucket fill) tool
+function floodFill(startX, startY) {
+    if (!state.maskCtx || !state.currentImage) return;
+
+    const currentImageId = state.images[state.currentImageIndex]?.id;
+    if (!currentImageId) return;
+
+    // Ensure mask layer exists
+    if (!state.maskLayers[currentImageId]) {
+        state.maskLayers[currentImageId] = state.maskCtx.createImageData(state.canvas.width, state.canvas.height);
+    }
+
+    const maskData = state.maskLayers[currentImageId];
+    const label = state.labels.find(l => l.id === state.selectedLabelId);
+    if (!label) return;
+
+    const width = maskData.width;
+    const height = maskData.height;
+    const data = maskData.data;
+
+    // Get target color (color we're filling)
+    const startIdx = (Math.floor(startY) * width + Math.floor(startX)) * 4;
+    const targetR = data[startIdx];
+    const targetG = data[startIdx + 1];
+    const targetB = data[startIdx + 2];
+    const targetA = data[startIdx + 3];
+
+    // Get fill color
+    const color = label.color;
+    const fillR = parseInt(color.slice(1, 3), 16);
+    const fillG = parseInt(color.slice(3, 5), 16);
+    const fillB = parseInt(color.slice(5, 7), 16);
+    const fillA = Math.floor(state.brushOpacity * 255);
+
+    // Don't fill if already the same color
+    if (targetR === fillR && targetG === fillG && targetB === fillB && targetA === fillA) {
+        return;
+    }
+
+    // Stack-based flood fill to avoid recursion stack overflow
+    const stack = [[Math.floor(startX), Math.floor(startY)]];
+    const visited = new Set();
+
+    while (stack.length > 0) {
+        const [x, y] = stack.pop();
+
+        // Check bounds
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+        // Check if already visited
+        const key = `${x},${y}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+
+        // Check if pixel matches target color
+        const idx = (y * width + x) * 4;
+        if (data[idx] !== targetR || data[idx + 1] !== targetG ||
+            data[idx + 2] !== targetB || data[idx + 3] !== targetA) {
+            continue;
+        }
+
+        // Fill this pixel
+        data[idx] = fillR;
+        data[idx + 1] = fillG;
+        data[idx + 2] = fillB;
+        data[idx + 3] = fillA;
+
+        // Add neighbors to stack
+        stack.push([x + 1, y]);
+        stack.push([x - 1, y]);
+        stack.push([x, y + 1]);
+        stack.push([x, y - 1]);
+    }
+
+    state.maskLayers[currentImageId] = maskData;
+    saveToHistory();
+    render();
+}
+
+// Zoom (slower, more precise for annotation work)
 function zoomIn() {
-    state.zoom = Math.min(5, state.zoom * 1.2);
+    state.zoom = Math.min(10, state.zoom * 1.1); // Increased max zoom to 10x, slower increment
     render();
 }
 
 function zoomOut() {
-    state.zoom = Math.max(0.1, state.zoom / 1.2);
+    state.zoom = Math.max(0.1, state.zoom / 1.1); // Slower decrement
     render();
 }
 
 function resetZoom() {
     state.zoom = 1;
     state.pan = { x: 0, y: 0 };
+    render();
+}
+
+function setZoom(zoomLevel) {
+    state.zoom = Math.max(0.1, Math.min(10, zoomLevel));
     render();
 }
 
@@ -1301,7 +2173,7 @@ function setupKeyboardShortcuts() {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
         // Prevent default for our shortcuts
-        const shouldPrevent = ['a', 'b', 'v', 'p', '0', '+', '-', 'ArrowLeft', 'ArrowRight', 'Delete', 'Escape'].includes(e.key) ||
+        const shouldPrevent = ['a', 'b', 'v', 'p', 'l', 'k', 'm', 'e', 'f', '0', '+', '-', 'ArrowLeft', 'ArrowRight', 'Delete', 'Escape'].includes(e.key) ||
                              (e.ctrlKey && ['z', 'y'].includes(e.key.toLowerCase()));
 
         if (shouldPrevent) {
@@ -1312,6 +2184,11 @@ function setupKeyboardShortcuts() {
         if (e.key === 'b') setTool('bbox');
         if (e.key === 'v') setTool('select');
         if (e.key === 'p') setTool('polygon');
+        if (e.key === 'l') setTool('ellipse');
+        if (e.key === 'k') setTool('keypoint');
+        if (e.key === 'm') setTool('brush');
+        if (e.key === 'e') setTool('eraser');
+        if (e.key === 'f') setTool('fill');
 
         // Actions
         if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
@@ -1322,9 +2199,16 @@ function setupKeyboardShortcuts() {
                 deleteSelected();
             }
         }
+        if (e.key === 'Enter' && state.isPreviewMode) {
+            acceptSelectedDetections();
+        }
         if (e.key === 'Escape') {
+            // Exit preview mode
+            if (state.isPreviewMode) {
+                rejectAllPreviews();
+            }
             // Cancel polygon
-            if (state.currentTool === 'polygon' && state.polygonPoints.length > 0) {
+            else if (state.currentTool === 'polygon' && state.polygonPoints.length > 0) {
                 state.polygonPoints = [];
                 render();
             } else {
@@ -1353,8 +2237,8 @@ function setupKeyboardShortcuts() {
 
 // Shortcuts Help
 function showShortcuts() {
-    document.getElementById('overlay').classList.add('visible');
-    document.getElementById('shortcutsHelp').classList.add('visible');
+    // Use new keyboard shortcuts overlay
+    showKeyboardShortcuts();
 }
 
 function hideShortcuts() {
@@ -1391,6 +2275,175 @@ function filterImages(query) {
     });
 }
 
+// AI Preview Mode Functions
+async function runAIPreview() {
+    if (!state.currentImage) {
+        alert('No image loaded');
+        return;
+    }
+
+    const actionId = window.appLogger?.startAction('runAIPreview');
+
+    try {
+        setSam2SpinnerVisible(true);
+        const imageData = state.images[state.currentImageIndex];
+        const datasetLabel = getDatasetLabelName();
+        const fallbackLabel = state.labels.find(l => l.id === state.selectedLabelId)?.name || 'product';
+        const labelName = datasetLabel || fallbackLabel;
+
+        window.appLogger?.info('Running AI preview', {
+            engine: 'yolo',
+            confidence: getAiConfidenceThreshold()
+        });
+
+        const response = await fetch('/api/auto-annotate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_path: imageData.path,
+                confidence: getAiConfidenceThreshold(),
+                label: labelName,
+                target_class: 'bottle'
+            })
+        });
+
+        if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            throw new Error(errorPayload?.error || 'AI detection failed');
+        }
+
+        const payload = await response.json();
+        if (!payload.success) {
+            throw new Error(payload.error || 'AI detection failed');
+        }
+
+        const detections = Array.isArray(payload.detections) ? payload.detections : [];
+
+        if (detections.length === 0) {
+            alert(`No detections found at ${(getAiConfidenceThreshold() * 100).toFixed(0)}% confidence.\n\nTry lowering the confidence threshold.`);
+            setSam2SpinnerVisible(false);
+            return;
+        }
+
+        // Convert detections to canvas coordinates
+        const scaleX = state.canvas.width / state.currentImage.width;
+        const scaleY = state.canvas.height / state.currentImage.height;
+
+        state.aiPreviewDetections = detections.map(det => ({
+            bbox: {
+                x: det.x * scaleX,
+                y: det.y * scaleY,
+                width: det.width * scaleX,
+                height: det.height * scaleY
+            },
+            confidence: det.confidence,
+            labelName: labelName
+        }));
+
+        // Select all by default
+        state.selectedPreviewIndices = new Set(
+            state.aiPreviewDetections.map((_, idx) => idx)
+        );
+
+        state.isPreviewMode = true;
+        setSam2SpinnerVisible(false);
+        render();
+        updatePreviewUI();
+
+        window.appLogger?.info('AI preview ready', {
+            detections: detections.length
+        });
+        if (actionId) window.appLogger.endAction(actionId, true, { count: detections.length });
+
+    } catch (error) {
+        setSam2SpinnerVisible(false);
+        console.error('AI preview error:', error);
+        window.appLogger?.error('AI preview failed', {}, { error: error.message });
+        alert('AI detection failed: ' + error.message);
+        if (actionId) window.appLogger.failAction(actionId, error);
+    }
+}
+
+function togglePreviewSelection(index) {
+    if (state.selectedPreviewIndices.has(index)) {
+        state.selectedPreviewIndices.delete(index);
+    } else {
+        state.selectedPreviewIndices.add(index);
+    }
+    render();
+    updatePreviewUI();
+}
+
+function selectAllPreviews() {
+    state.selectedPreviewIndices = new Set(
+        state.aiPreviewDetections.map((_, idx) => idx)
+    );
+    render();
+    updatePreviewUI();
+}
+
+function deselectAllPreviews() {
+    state.selectedPreviewIndices.clear();
+    render();
+    updatePreviewUI();
+}
+
+function acceptSelectedDetections() {
+    const datasetLabel = getDatasetLabelName();
+    const fallbackLabel = state.labels.find(l => l.id === state.selectedLabelId)?.name || 'product';
+    const labelName = datasetLabel || fallbackLabel;
+    const labelId = ensureLabel(labelName);
+
+    let acceptedCount = 0;
+    state.selectedPreviewIndices.forEach(idx => {
+        const det = state.aiPreviewDetections[idx];
+        if (det) {
+            addAnnotation(det.bbox, {
+                labelId,
+                confidence: det.confidence,
+                createdBy: 'ai-preview'
+            });
+            acceptedCount++;
+        }
+    });
+
+    // Exit preview mode
+    state.isPreviewMode = false;
+    state.aiPreviewDetections = [];
+    state.selectedPreviewIndices.clear();
+
+    render();
+    updatePreviewUI();
+    window.appLogger?.info('Accepted AI detections', { count: acceptedCount });
+    alert(`✅ Accepted ${acceptedCount} detection(s)`);
+}
+
+function rejectAllPreviews() {
+    state.isPreviewMode = false;
+    state.aiPreviewDetections = [];
+    state.selectedPreviewIndices.clear();
+    render();
+    updatePreviewUI();
+}
+
+function updatePreviewUI() {
+    const controls = document.getElementById('aiPreviewControls');
+    const stats = document.getElementById('aiPreviewStats');
+
+    if (!controls) return; // UI not ready yet
+
+    if (state.isPreviewMode) {
+        controls.style.display = 'block';
+        if (stats) {
+            const total = state.aiPreviewDetections.length;
+            const selected = state.selectedPreviewIndices.size;
+            stats.textContent = `${selected} of ${total} selected`;
+        }
+    } else {
+        controls.style.display = 'none';
+    }
+}
+
 // AI Auto-Annotation
 async function aiAutoAnnotate() {
     if (!state.currentImage) {
@@ -1399,6 +2452,14 @@ async function aiAutoAnnotate() {
     }
 
     const engine = getAiEngine();
+
+    // For YOLO, use preview mode
+    if (engine === 'yolo') {
+        await runAIPreview();
+        return;
+    }
+
+    // For SAM2 and Gemini, use original flow
     const engineLabel = engine === 'sam2' ? 'refine with SAM2' : 'auto-detect bottles';
     const confirmed = confirm(`Use AI to ${engineLabel} in this image?`);
     if (!confirmed) return;
@@ -1608,71 +2669,1415 @@ async function saveProgress() {
     }
 }
 
-// Export Annotations
-async function exportAnnotations() {
+// Mask to polygon approximation using contour tracing
+function maskToPolygon(maskData, imageId) {
+    const width = maskData.width;
+    const height = maskData.height;
+    const data = maskData.data;
+
+    // Find contours for each label
+    const contours = {};
+
+    // Create binary masks for each label
+    const labelMasks = {};
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * 4;
+            const alpha = data[idx + 3];
+
+            if (alpha > 0) {
+                // Get label color
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+                const colorKey = `${r},${g},${b}`;
+
+                if (!labelMasks[colorKey]) {
+                    labelMasks[colorKey] = new Set();
+                }
+                labelMasks[colorKey].add(`${x},${y}`);
+            }
+        }
+    }
+
+    // Simple boundary tracing for each label
+    Object.entries(labelMasks).forEach(([colorKey, pixels]) => {
+        const boundary = [];
+        const visited = new Set();
+
+        // Find starting point (topmost, leftmost pixel)
+        let startX = width, startY = height;
+        pixels.forEach(pixelKey => {
+            const [x, y] = pixelKey.split(',').map(Number);
+            if (y < startY || (y === startY && x < startX)) {
+                startX = x;
+                startY = y;
+            }
+        });
+
+        // Trace boundary (simplified Moore-Neighbor tracing)
+        let x = startX, y = startY;
+        const directions = [[0,-1], [1,-1], [1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1]];
+        let dir = 0;
+
+        do {
+            boundary.push([x, y]);
+            visited.add(`${x},${y}`);
+
+            // Find next boundary pixel
+            let found = false;
+            for (let i = 0; i < 8; i++) {
+                const [dx, dy] = directions[(dir + i) % 8];
+                const nx = x + dx, ny = y + dy;
+                const key = `${nx},${ny}`;
+
+                if (pixels.has(key) && !visited.has(key)) {
+                    x = nx;
+                    y = ny;
+                    dir = (dir + i + 6) % 8; // Turn left
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found || boundary.length > 1000) break;
+        } while (x !== startX || y !== startY);
+
+        if (boundary.length > 2) {
+            contours[colorKey] = boundary;
+        }
+    });
+
+    return contours;
+}
+
+// Export Annotations with multiple format support
+async function exportAnnotations(format = 'yolo') {
     try {
-        // Get actual image dimensions (we need to convert from canvas to image coordinates)
         const imgWidth = state.currentImage ? state.currentImage.width : state.canvas.width;
         const imgHeight = state.currentImage ? state.currentImage.height : state.canvas.height;
 
-        // Convert to YOLO format
-        const yoloData = {};
+        if (format === 'coco') {
+            // COCO JSON format
+            const cocoData = {
+                info: {
+                    description: "Product Capture 360 Annotations",
+                    version: "1.0",
+                    year: new Date().getFullYear(),
+                    date_created: new Date().toISOString()
+                },
+                licenses: [],
+                images: [],
+                annotations: [],
+                categories: state.labels.map(label => ({
+                    id: label.id,
+                    name: label.name,
+                    supercategory: "product"
+                }))
+            };
 
-        Object.keys(state.annotations).forEach(imageId => {
-            const image = state.images.find(img => img.id == imageId);
-            if (!image) return;
+            let annotationId = 1;
 
-            const annotations = state.annotations[imageId];
-            const yoloLines = annotations.map(ann => {
-                if (ann.polygon && ann.polygon.length > 0) {
-                    // Export polygon segmentation format
-                    // Convert canvas coordinates to image coordinates, then normalize
+            state.images.forEach((image, imageIdx) => {
+                cocoData.images.push({
+                    id: image.id,
+                    file_name: image.filename,
+                    width: imgWidth,
+                    height: imgHeight
+                });
+
+                const annotations = state.annotations[image.id] || [];
+                annotations.forEach(ann => {
                     const scaleX = imgWidth / state.canvas.width;
                     const scaleY = imgHeight / state.canvas.height;
 
-                    const points = ann.polygon.map(p => {
-                        const x_norm = (p.x * scaleX) / imgWidth;
-                        const y_norm = (p.y * scaleY) / imgHeight;
-                        return `${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`;
-                    }).join(' ');
+                    const annotation = {
+                        id: annotationId++,
+                        image_id: image.id,
+                        category_id: ann.labelId,
+                        score: ann.confidence || 1.0,
+                        iscrowd: 0
+                    };
 
-                    return `${ann.labelId} ${points}`;
-                } else {
-                    // Export bbox format (existing code)
-                    // Convert canvas coordinates to image coordinates, then normalize
-                    const scaleX = imgWidth / state.canvas.width;
-                    const scaleY = imgHeight / state.canvas.height;
+                    if (ann.ellipse) {
+                        // Ellipse - approximate as polygon for COCO format
+                        const numPoints = 32; // Number of points to approximate ellipse
+                        const points = [];
+                        for (let i = 0; i < numPoints; i++) {
+                            const angle = (i / numPoints) * 2 * Math.PI;
+                            const x = (ann.ellipse.center.x + Math.cos(angle) * ann.ellipse.radiusX) * scaleX;
+                            const y = (ann.ellipse.center.y + Math.sin(angle) * ann.ellipse.radiusY) * scaleY;
+                            points.push(x, y);
+                        }
+                        annotation.segmentation = [points];
 
-                    const centerX = ((ann.bbox.x + ann.bbox.width / 2) * scaleX) / imgWidth;
-                    const centerY = ((ann.bbox.y + ann.bbox.height / 2) * scaleY) / imgHeight;
-                    const width = (ann.bbox.width * scaleX) / imgWidth;
-                    const height = (ann.bbox.height * scaleY) / imgHeight;
+                        // Bounding box from ellipse
+                        const bbox = [
+                            (ann.ellipse.center.x - ann.ellipse.radiusX) * scaleX,
+                            (ann.ellipse.center.y - ann.ellipse.radiusY) * scaleY,
+                            ann.ellipse.radiusX * 2 * scaleX,
+                            ann.ellipse.radiusY * 2 * scaleY
+                        ];
+                        annotation.bbox = bbox;
+                        annotation.area = Math.PI * ann.ellipse.radiusX * ann.ellipse.radiusY * scaleX * scaleY;
+                    } else if (ann.polygon && ann.polygon.length > 0) {
+                        // Polygon segmentation
+                        const points = ann.polygon.flatMap(p => [
+                            p.x * scaleX,
+                            p.y * scaleY
+                        ]);
+                        annotation.segmentation = [points];
 
-                    return `${ann.labelId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`;
+                        // Calculate bbox and area from polygon
+                        const xs = ann.polygon.map(p => p.x * scaleX);
+                        const ys = ann.polygon.map(p => p.y * scaleY);
+                        const bbox = [
+                            Math.min(...xs),
+                            Math.min(...ys),
+                            Math.max(...xs) - Math.min(...xs),
+                            Math.max(...ys) - Math.min(...ys)
+                        ];
+                        annotation.bbox = bbox;
+                        annotation.area = bbox[2] * bbox[3];
+                    } else {
+                        // Bounding box
+                        const bbox = [
+                            ann.bbox.x * scaleX,
+                            ann.bbox.y * scaleY,
+                            ann.bbox.width * scaleX,
+                            ann.bbox.height * scaleY
+                        ];
+                        annotation.bbox = bbox;
+                        annotation.area = bbox[2] * bbox[3];
+                        annotation.segmentation = [];
+                    }
+
+                    cocoData.annotations.push(annotation);
+                });
+
+                // Export masks if they exist
+                if (state.maskLayers[image.id]) {
+                    const maskPolygons = maskToPolygon(state.maskLayers[image.id], image.id);
+
+                    Object.entries(maskPolygons).forEach(([colorKey, boundary]) => {
+                        const [r, g, b] = colorKey.split(',').map(Number);
+
+                        // Find label by color
+                        const label = state.labels.find(l => {
+                            const lr = parseInt(l.color.slice(1, 3), 16);
+                            const lg = parseInt(l.color.slice(3, 5), 16);
+                            const lb = parseInt(l.color.slice(5, 7), 16);
+                            return Math.abs(lr - r) < 10 && Math.abs(lg - g) < 10 && Math.abs(lb - b) < 10;
+                        });
+
+                        if (label && boundary.length > 2) {
+                            const scaleX = imgWidth / state.canvas.width;
+                            const scaleY = imgHeight / state.canvas.height;
+
+                            const points = boundary.flatMap(([x, y]) => [x * scaleX, y * scaleY]);
+                            const xs = boundary.map(([x]) => x * scaleX);
+                            const ys = boundary.map(([, y]) => y * scaleY);
+
+                            const bbox = [
+                                Math.min(...xs),
+                                Math.min(...ys),
+                                Math.max(...xs) - Math.min(...xs),
+                                Math.max(...ys) - Math.min(...ys)
+                            ];
+
+                            cocoData.annotations.push({
+                                id: annotationId++,
+                                image_id: image.id,
+                                category_id: label.id,
+                                segmentation: [points],
+                                bbox: bbox,
+                                area: bbox[2] * bbox[3],
+                                score: 1.0,
+                                iscrowd: 0
+                            });
+                        }
+                    });
+                }
+
+                // Export keypoint annotations if they exist
+                if (state.keypointAnnotations[image.id]) {
+                    const keypointData = state.keypointAnnotations[image.id];
+                    const template = KEYPOINT_TEMPLATES[keypointData.template];
+
+                    keypointData.instances.forEach(instance => {
+                        const scaleX = imgWidth / state.canvas.width;
+                        const scaleY = imgHeight / state.canvas.height;
+
+                        // Flatten keypoints to COCO format: [x1, y1, v1, x2, y2, v2, ...]
+                        const keypoints = [];
+                        let numKeypoints = 0;
+
+                        instance.keypoints.forEach(kp => {
+                            if (kp) {
+                                keypoints.push(
+                                    kp.x * scaleX,
+                                    kp.y * scaleY,
+                                    kp.visibility
+                                );
+                                if (kp.visibility > 0) numKeypoints++;
+                            } else {
+                                keypoints.push(0, 0, 0);
+                            }
+                        });
+
+                        // Create COCO keypoint annotation
+                        const bbox = instance.bbox ? [
+                            instance.bbox.x * scaleX,
+                            instance.bbox.y * scaleY,
+                            instance.bbox.width * scaleX,
+                            instance.bbox.height * scaleY
+                        ] : [0, 0, 0, 0];
+
+                        cocoData.annotations.push({
+                            id: annotationId++,
+                            image_id: image.id,
+                            category_id: instance.labelId,
+                            keypoints: keypoints,
+                            num_keypoints: numKeypoints,
+                            bbox: bbox,
+                            area: bbox[2] * bbox[3],
+                            iscrowd: 0
+                        });
+                    });
                 }
             });
 
-            yoloData[image.filename] = yoloLines;
-        });
+            // Add keypoint definitions to categories if keypoint annotations exist
+            const hasKeypoints = Object.values(state.keypointAnnotations).some(data => data.instances.length > 0);
+            if (hasKeypoints) {
+                cocoData.categories = cocoData.categories.map(cat => {
+                    const template = KEYPOINT_TEMPLATES['coco-person']; // Default to COCO person
+                    return {
+                        ...cat,
+                        keypoints: template.keypoints,
+                        skeleton: template.skeleton.map(([a, b]) => [a + 1, b + 1]) // COCO uses 1-indexed
+                    };
+                });
+            }
 
-        // Create downloadable file
-        const blob = new Blob([JSON.stringify(yoloData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'annotations_yolo.json';
-        a.click();
-        URL.revokeObjectURL(url);
+            const blob = new Blob([JSON.stringify(cocoData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'annotations_coco.json';
+            a.click();
+            URL.revokeObjectURL(url);
+
+        } else if (format === 'voc') {
+            // Pascal VOC XML format
+            const JSZip = window.JSZip || null;
+
+            if (!JSZip) {
+                alert('JSZip library not loaded. VOC export requires JSZip for creating archives.');
+                return;
+            }
+
+            const zip = new JSZip();
+            const annotationsFolder = zip.folder('Annotations');
+
+            state.images.forEach((image) => {
+                const annotations = state.annotations[image.id] || [];
+
+                if (annotations.length === 0) return; // Skip images without annotations
+
+                const scaleX = imgWidth / state.canvas.width;
+                const scaleY = imgHeight / state.canvas.height;
+
+                // Create XML document
+                let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+                xml += '<annotation>\n';
+                xml += `\t<folder>images</folder>\n`;
+                xml += `\t<filename>${image.filename}</filename>\n`;
+                xml += `\t<path>${image.path || image.filename}</path>\n`;
+                xml += `\t<source>\n`;
+                xml += `\t\t<database>Product Capture 360</database>\n`;
+                xml += `\t</source>\n`;
+                xml += `\t<size>\n`;
+                xml += `\t\t<width>${imgWidth}</width>\n`;
+                xml += `\t\t<height>${imgHeight}</height>\n`;
+                xml += `\t\t<depth>3</depth>\n`;
+                xml += `\t</size>\n`;
+                xml += `\t<segmented>0</segmented>\n`;
+
+                // Add objects
+                annotations.forEach(ann => {
+                    const label = state.labels.find(l => l.id === ann.labelId);
+                    const labelName = label ? label.name : 'unknown';
+
+                    // Calculate bounding box in image coordinates
+                    let xmin, ymin, xmax, ymax;
+
+                    if (ann.ellipse) {
+                        // Ellipse bounding box
+                        xmin = Math.round((ann.ellipse.center.x - ann.ellipse.radiusX) * scaleX);
+                        ymin = Math.round((ann.ellipse.center.y - ann.ellipse.radiusY) * scaleY);
+                        xmax = Math.round((ann.ellipse.center.x + ann.ellipse.radiusX) * scaleX);
+                        ymax = Math.round((ann.ellipse.center.y + ann.ellipse.radiusY) * scaleY);
+                    } else if (ann.polygon && ann.polygon.length > 0) {
+                        // Polygon bounding box
+                        const xs = ann.polygon.map(p => p.x * scaleX);
+                        const ys = ann.polygon.map(p => p.y * scaleY);
+                        xmin = Math.round(Math.min(...xs));
+                        ymin = Math.round(Math.min(...ys));
+                        xmax = Math.round(Math.max(...xs));
+                        ymax = Math.round(Math.max(...ys));
+                    } else {
+                        // Regular bounding box
+                        xmin = Math.round(ann.bbox.x * scaleX);
+                        ymin = Math.round(ann.bbox.y * scaleY);
+                        xmax = Math.round((ann.bbox.x + ann.bbox.width) * scaleX);
+                        ymax = Math.round((ann.bbox.y + ann.bbox.height) * scaleY);
+                    }
+
+                    // Ensure coordinates are within image bounds
+                    xmin = Math.max(0, Math.min(xmin, imgWidth));
+                    ymin = Math.max(0, Math.min(ymin, imgHeight));
+                    xmax = Math.max(0, Math.min(xmax, imgWidth));
+                    ymax = Math.max(0, Math.min(ymax, imgHeight));
+
+                    xml += `\t<object>\n`;
+                    xml += `\t\t<name>${labelName}</name>\n`;
+                    xml += `\t\t<pose>Unspecified</pose>\n`;
+                    xml += `\t\t<truncated>0</truncated>\n`;
+                    xml += `\t\t<difficult>0</difficult>\n`;
+                    xml += `\t\t<bndbox>\n`;
+                    xml += `\t\t\t<xmin>${xmin}</xmin>\n`;
+                    xml += `\t\t\t<ymin>${ymin}</ymin>\n`;
+                    xml += `\t\t\t<xmax>${xmax}</xmax>\n`;
+                    xml += `\t\t\t<ymax>${ymax}</ymax>\n`;
+                    xml += `\t\t</bndbox>\n`;
+                    xml += `\t</object>\n`;
+                });
+
+                xml += '</annotation>\n';
+
+                // Add XML file to zip (same name as image but with .xml extension)
+                const xmlFilename = image.filename.replace(/\.[^/.]+$/, '.xml');
+                annotationsFolder.file(xmlFilename, xml);
+            });
+
+            // Generate and download zip file
+            zip.generateAsync({type: 'blob'}).then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'annotations_voc.zip';
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+        } else {
+            // YOLO format (default)
+            const yoloData = {};
+
+            Object.keys(state.annotations).forEach(imageId => {
+                const image = state.images.find(img => img.id == imageId);
+                if (!image) return;
+
+                const annotations = state.annotations[imageId];
+                const yoloLines = annotations.map(ann => {
+                    const scaleX = imgWidth / state.canvas.width;
+                    const scaleY = imgHeight / state.canvas.height;
+
+                    if (ann.ellipse) {
+                        // Ellipse - approximate as polygon for YOLO segmentation format
+                        const numPoints = 32;
+                        const points = [];
+                        for (let i = 0; i < numPoints; i++) {
+                            const angle = (i / numPoints) * 2 * Math.PI;
+                            const x = (ann.ellipse.center.x + Math.cos(angle) * ann.ellipse.radiusX) * scaleX;
+                            const y = (ann.ellipse.center.y + Math.sin(angle) * ann.ellipse.radiusY) * scaleY;
+                            const x_norm = x / imgWidth;
+                            const y_norm = y / imgHeight;
+                            points.push(`${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`);
+                        }
+                        return `${ann.labelId} ${points.join(' ')}`;
+                    } else if (ann.polygon && ann.polygon.length > 0) {
+                        const points = ann.polygon.map(p => {
+                            const x_norm = (p.x * scaleX) / imgWidth;
+                            const y_norm = (p.y * scaleY) / imgHeight;
+                            return `${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`;
+                        }).join(' ');
+
+                        return `${ann.labelId} ${points}`;
+                    } else {
+                        const centerX = ((ann.bbox.x + ann.bbox.width / 2) * scaleX) / imgWidth;
+                        const centerY = ((ann.bbox.y + ann.bbox.height / 2) * scaleY) / imgHeight;
+                        const width = (ann.bbox.width * scaleX) / imgWidth;
+                        const height = (ann.bbox.height * scaleY) / imgHeight;
+
+                        return `${ann.labelId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`;
+                    }
+                });
+
+                yoloData[image.filename] = yoloLines;
+            });
+
+            const blob = new Blob([JSON.stringify(yoloData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'annotations_yolo.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
 
         alert('✅ Annotations exported successfully!');
     } catch (error) {
         console.error('Export error:', error);
-        alert('Failed to export annotations');
+        alert('Failed to export annotations: ' + error.message);
     }
 }
 
+// ==============================
+// VIDEO FRAME EXTRACTION
+// ==============================
+
+// Global video element for frame extraction
+let videoElement = null;
+
+/**
+ * Handle video file upload
+ */
+function handleVideoUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    window.appLogger?.info('Video file selected', {
+        filename: file.name,
+        size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
+    });
+
+    // Create video element
+    if (videoElement) {
+        URL.revokeObjectURL(videoElement.src);
+    }
+
+    videoElement = document.createElement('video');
+    videoElement.src = URL.createObjectURL(file);
+    videoElement.preload = 'metadata';
+
+    videoElement.addEventListener('loadedmetadata', () => {
+        const duration = videoElement.duration;
+        const minutes = Math.floor(duration / 60);
+        const seconds = Math.floor(duration % 60);
+
+        window.appLogger?.info('Video metadata loaded', {
+            duration: `${minutes}:${seconds.toString().padStart(2, '0')}`,
+            width: videoElement.videoWidth,
+            height: videoElement.videoHeight
+        });
+
+        // Enable extract button
+        document.getElementById('extractFramesBtn').disabled = false;
+    });
+
+    videoElement.addEventListener('error', (e) => {
+        window.appLogger?.error('Video load error', { filename: file.name });
+        alert('Failed to load video: ' + (videoElement.error?.message || 'Unknown error'));
+        document.getElementById('extractFramesBtn').disabled = true;
+    });
+}
+
+/**
+ * Extract frames from uploaded video
+ */
+async function extractVideoFrames() {
+    if (!videoElement) {
+        alert('Please upload a video first');
+        return;
+    }
+
+    const frameInterval = parseInt(document.getElementById('frameInterval').value) || 5;
+    const duration = videoElement.duration;
+    const fps = 30; // Assume 30fps (will extract actual metadata later if needed)
+
+    // Calculate total frames
+    const totalVideoFrames = Math.floor(duration * fps);
+    const framesToExtract = Math.floor(totalVideoFrames / frameInterval);
+
+    window.appLogger?.info('Starting frame extraction', {
+        duration,
+        frameInterval,
+        framesToExtract
+    });
+
+    // Show progress
+    const progressDiv = document.getElementById('videoProgress');
+    const progressText = document.getElementById('videoProgressText');
+    const progressBar = document.getElementById('videoProgressBar');
+
+    progressDiv.style.display = 'block';
+    progressText.textContent = `Extracting frames... 0 / ${framesToExtract}`;
+    progressBar.style.width = '0%';
+
+    // Disable button during extraction
+    document.getElementById('extractFramesBtn').disabled = true;
+
+    // Create canvas for frame extraction
+    const canvas = document.createElement('canvas');
+    canvas.width = videoElement.videoWidth;
+    canvas.height = videoElement.videoHeight;
+    const ctx = canvas.getContext('2d');
+
+    const extractedFrames = [];
+    let frameIndex = 0;
+
+    try {
+        // Extract frames at intervals
+        for (let i = 0; i < totalVideoFrames; i += frameInterval) {
+            const timestamp = i / fps;
+
+            // Seek to timestamp
+            await seekVideoTo(videoElement, timestamp);
+
+            // Draw current frame to canvas
+            ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+            // Convert canvas to blob
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/jpeg', 0.95);
+            });
+
+            // Create data URL
+            const dataUrl = await blobToDataURL(blob);
+
+            // Create image object
+            const frameObj = {
+                id: frameIndex,
+                filename: `frame_${String(frameIndex + 1).padStart(5, '0')}.jpg`,
+                path: dataUrl,
+                annotated: false,
+                frameNumber: i,
+                timestamp: timestamp
+            };
+
+            extractedFrames.push(frameObj);
+            frameIndex++;
+
+            // Update progress
+            const progress = Math.floor((frameIndex / framesToExtract) * 100);
+            progressText.textContent = `Extracting frames... ${frameIndex} / ${framesToExtract}`;
+            progressBar.style.width = `${progress}%`;
+
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        // Update state with extracted frames
+        state.images = extractedFrames;
+        state.isVideoMode = true;
+        state.videoFrames = extractedFrames;
+        state.fps = fps;
+
+        // Render image list
+        renderImageList();
+
+        // Load first frame
+        if (extractedFrames.length > 0) {
+            loadImage(0);
+        }
+
+        // Show video timeline
+        document.getElementById('videoTimeline').style.display = 'block';
+        document.getElementById('totalFrames').textContent = extractedFrames.length;
+        document.getElementById('frameSlider').max = extractedFrames.length - 1;
+        updateFrameDisplay();
+
+        updateStats();
+        initializeHistory();
+
+        window.appLogger?.info('Frame extraction complete', {
+            framesExtracted: extractedFrames.length
+        });
+
+        // Hide progress
+        progressDiv.style.display = 'none';
+
+        alert(`✅ Extracted ${extractedFrames.length} frames successfully!`);
+    } catch (error) {
+        window.appLogger?.error('Frame extraction failed', {}, { error: error.message });
+        alert('Frame extraction failed: ' + error.message);
+
+        progressDiv.style.display = 'none';
+    } finally {
+        // Re-enable button
+        document.getElementById('extractFramesBtn').disabled = false;
+    }
+}
+
+/**
+ * Seek video to specific timestamp
+ */
+function seekVideoTo(video, timestamp) {
+    return new Promise((resolve, reject) => {
+        const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked);
+            video.removeEventListener('error', onError);
+            resolve();
+        };
+
+        const onError = (e) => {
+            video.removeEventListener('seeked', onSeeked);
+            video.removeEventListener('error', onError);
+            reject(new Error('Video seek failed'));
+        };
+
+        video.addEventListener('seeked', onSeeked);
+        video.addEventListener('error', onError);
+
+        video.currentTime = timestamp;
+    });
+}
+
+/**
+ * Convert blob to data URL
+ */
+function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+/**
+ * Navigate to next frame
+ */
+function nextFrame() {
+    if (!state.isVideoMode || state.currentImageIndex >= state.images.length - 1) return;
+    loadImage(state.currentImageIndex + 1);
+    updateFrameDisplay();
+}
+
+/**
+ * Navigate to previous frame
+ */
+function previousFrame() {
+    if (!state.isVideoMode || state.currentImageIndex <= 0) return;
+    loadImage(state.currentImageIndex - 1);
+    updateFrameDisplay();
+}
+
+/**
+ * Seek to specific frame
+ */
+function seekToFrame(frameIndex) {
+    if (!state.isVideoMode) return;
+    loadImage(frameIndex);
+    updateFrameDisplay();
+}
+
+/**
+ * Update frame display in timeline
+ */
+function updateFrameDisplay() {
+    if (!state.isVideoMode) return;
+
+    const frame = state.images[state.currentImageIndex];
+    if (!frame) return;
+
+    document.getElementById('currentFrameNum').textContent = state.currentImageIndex + 1;
+    document.getElementById('frameSlider').value = state.currentImageIndex;
+
+    // Calculate timestamp
+    const timestamp = frame.timestamp || 0;
+    const minutes = Math.floor(timestamp / 60);
+    const seconds = Math.floor(timestamp % 60);
+    const ms = Math.floor((timestamp % 1) * 100);
+
+    document.getElementById('frameTimestamp').textContent =
+        `${minutes}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+
+    // Update tracking UI
+    updateTrackingUI();
+}
+
+// ==============================
+// OBJECT TRACKING
+// ==============================
+
+/**
+ * Toggle tracking mode
+ */
+function toggleTracking(enabled) {
+    state.trackingEnabled = enabled;
+
+    window.appLogger?.info('Tracking toggled', { enabled });
+
+    // Enable/disable tracking buttons
+    updateTrackingUI();
+}
+
+/**
+ * Update tracking UI state
+ */
+function updateTrackingUI() {
+    if (!state.isVideoMode) return;
+
+    const hasSelection = state.selectedAnnotationId !== null;
+    const trackingEnabled = state.trackingEnabled;
+
+    const propagateBtn = document.getElementById('propagateBtn');
+    const autoTrackBtn = document.getElementById('autoTrackBtn');
+
+    if (propagateBtn) {
+        propagateBtn.disabled = !trackingEnabled || !hasSelection;
+    }
+
+    if (autoTrackBtn) {
+        autoTrackBtn.disabled = !trackingEnabled || !hasSelection;
+    }
+
+    // Update track count
+    const trackCount = Object.keys(state.tracks).length;
+    const trackCountEl = document.getElementById('trackCount');
+    if (trackCountEl) {
+        trackCountEl.textContent = trackCount;
+    }
+}
+
+/**
+ * Create or get track ID for annotation
+ */
+function getOrCreateTrackId(annotation) {
+    // If annotation already has trackId, return it
+    if (annotation.trackId !== undefined) {
+        return annotation.trackId;
+    }
+
+    // Create new track
+    const trackId = state.nextTrackId++;
+    annotation.trackId = trackId;
+
+    // Initialize track in state
+    const label = state.labels.find(l => l.id === annotation.labelId);
+    state.tracks[trackId] = {
+        id: trackId,
+        label: label ? label.name : 'unknown',
+        labelId: annotation.labelId,
+        color: label ? label.color : '#3b82f6',
+        annotations: []
+    };
+
+    window.appLogger?.info('Created new track', { trackId, label: state.tracks[trackId].label });
+
+    return trackId;
+}
+
+/**
+ * Propagate selected annotation to next frame
+ */
+function propagateAnnotation() {
+    if (!state.trackingEnabled || state.selectedAnnotationId === null) {
+        return;
+    }
+
+    const currentImageId = state.images[state.currentImageIndex].id;
+    const annotations = state.annotations[currentImageId] || [];
+    const selectedAnn = annotations[state.selectedAnnotationId];
+
+    if (!selectedAnn) {
+        alert('No annotation selected');
+        return;
+    }
+
+    // Check if next frame exists
+    if (state.currentImageIndex >= state.images.length - 1) {
+        alert('Already at last frame');
+        return;
+    }
+
+    // Get or create track ID
+    const trackId = getOrCreateTrackId(selectedAnn);
+
+    // Move to next frame
+    const nextFrameIndex = state.currentImageIndex + 1;
+    const nextImageId = state.images[nextFrameIndex].id;
+
+    // Create copy of annotation for next frame
+    const nextAnn = {
+        ...selectedAnn,
+        trackId: trackId,
+        createdBy: 'tracking'
+    };
+
+    // Add to next frame
+    if (!state.annotations[nextImageId]) {
+        state.annotations[nextImageId] = [];
+    }
+
+    state.annotations[nextImageId].push(nextAnn);
+
+    // Update track
+    state.tracks[trackId].annotations.push({
+        frameId: nextImageId,
+        frameIndex: nextFrameIndex,
+        bbox: nextAnn.bbox
+    });
+
+    // Save and move to next frame
+    saveToHistory();
+    loadImage(nextFrameIndex);
+
+    window.appLogger?.info('Annotation propagated', {
+        trackId,
+        fromFrame: state.currentImageIndex,
+        toFrame: nextFrameIndex
+    });
+}
+
+/**
+ * Auto-track object forward using simple interpolation
+ */
+async function autoTrackForward() {
+    if (!state.trackingEnabled || state.selectedAnnotationId === null) {
+        return;
+    }
+
+    const currentImageId = state.images[state.currentImageIndex].id;
+    const annotations = state.annotations[currentImageId] || [];
+    const selectedAnn = annotations[state.selectedAnnotationId];
+
+    if (!selectedAnn) {
+        alert('No annotation selected');
+        return;
+    }
+
+    // Get or create track ID
+    const trackId = getOrCreateTrackId(selectedAnn);
+
+    // Ask user how many frames to track
+    const framesToTrack = prompt('How many frames forward to auto-track?', '10');
+    if (!framesToTrack) return;
+
+    const numFrames = parseInt(framesToTrack);
+    if (isNaN(numFrames) || numFrames <= 0) {
+        alert('Please enter a valid number');
+        return;
+    }
+
+    const maxFrames = Math.min(numFrames, state.images.length - state.currentImageIndex - 1);
+
+    if (maxFrames === 0) {
+        alert('Already at last frame');
+        return;
+    }
+
+    window.appLogger?.info('Starting auto-track', {
+        trackId,
+        startFrame: state.currentImageIndex,
+        numFrames: maxFrames
+    });
+
+    // Simple tracking: propagate with slight motion compensation
+    let currentBbox = { ...selectedAnn.bbox };
+    const motionX = 0; // Could add motion estimation here
+    const motionY = 0;
+
+    for (let i = 1; i <= maxFrames; i++) {
+        const targetFrameIndex = state.currentImageIndex + i;
+        const targetImageId = state.images[targetFrameIndex].id;
+
+        // Apply motion compensation (simple constant velocity model)
+        currentBbox = {
+            x: currentBbox.x + motionX,
+            y: currentBbox.y + motionY,
+            width: currentBbox.width,
+            height: currentBbox.height
+        };
+
+        // Create annotation for this frame
+        const trackedAnn = {
+            labelId: selectedAnn.labelId,
+            bbox: { ...currentBbox },
+            trackId: trackId,
+            confidence: 1.0 - (i * 0.05), // Decrease confidence over time
+            createdBy: 'auto-tracking',
+            polygon: selectedAnn.polygon ? [...selectedAnn.polygon] : null,
+            ellipse: selectedAnn.ellipse ? { ...selectedAnn.ellipse } : null
+        };
+
+        // Add to frame
+        if (!state.annotations[targetImageId]) {
+            state.annotations[targetImageId] = [];
+        }
+
+        state.annotations[targetImageId].push(trackedAnn);
+
+        // Update track
+        state.tracks[trackId].annotations.push({
+            frameId: targetImageId,
+            frameIndex: targetFrameIndex,
+            bbox: trackedAnn.bbox
+        });
+
+        // Small delay to allow UI update
+        if (i % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+    }
+
+    saveToHistory();
+    renderAnnotationsList();
+    updateTrackingUI();
+
+    alert(`✅ Auto-tracked for ${maxFrames} frames!`);
+
+    window.appLogger?.info('Auto-track complete', {
+        trackId,
+        framesTracked: maxFrames
+    });
+}
+
+/**
+ * Export tracking data in MOT format
+ */
+function exportTrackingData() {
+    if (!state.isVideoMode || Object.keys(state.tracks).length === 0) {
+        alert('No tracking data available');
+        return;
+    }
+
+    // MOT Challenge format:
+    // <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>
+
+    const lines = [];
+
+    // Iterate through all frames
+    state.images.forEach((image, frameIdx) => {
+        const frameNum = frameIdx + 1; // 1-indexed
+        const imageId = image.id;
+        const annotations = state.annotations[imageId] || [];
+
+        annotations.forEach(ann => {
+            if (ann.trackId !== undefined) {
+                const bbox = ann.bbox;
+                const conf = ann.confidence || 1.0;
+
+                // MOT format line
+                const line = [
+                    frameNum,
+                    ann.trackId,
+                    Math.round(bbox.x),
+                    Math.round(bbox.y),
+                    Math.round(bbox.width),
+                    Math.round(bbox.height),
+                    conf.toFixed(2),
+                    -1, // x (3D, not used)
+                    -1, // y (3D, not used)
+                    -1  // z (3D, not used)
+                ].join(',');
+
+                lines.push(line);
+            }
+        });
+    });
+
+    // Download as .txt file
+    const content = lines.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tracking_mot.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    window.appLogger?.info('Tracking data exported', {
+        format: 'MOT',
+        tracks: Object.keys(state.tracks).length,
+        lines: lines.length
+    });
+
+    alert(`✅ Exported ${lines.length} tracking annotations in MOT format!`);
+}
+
+// ==================== UI ENHANCEMENTS ====================
+
+// Performance Tracking
+const performanceStats = {
+    sessionStartTime: Date.now(),
+    totalAnnotations: 0,
+    annotationTimestamps: [],
+    toolUsage: {},
+    avgAnnotationTime: 0
+};
+
+// Update performance metrics
+function updatePerformanceMetrics() {
+    const sessionTime = Math.floor((Date.now() - performanceStats.sessionStartTime) / 1000);
+    const minutes = Math.floor(sessionTime / 60);
+    const seconds = sessionTime % 60;
+
+    document.getElementById('sessionTime').textContent =
+        `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+    // Calculate annotations per minute
+    const sessionMinutes = sessionTime / 60 || 1;
+    const totalAnnots = Object.values(state.annotations).reduce((sum, anns) => sum + anns.length, 0);
+    const annotsPerMin = (totalAnnots / sessionMinutes).toFixed(1);
+
+    document.getElementById('annotsPerMin').textContent = annotsPerMin;
+}
+
+// Start performance tracking interval
+let performanceInterval = null;
+function startPerformanceTracking() {
+    if (performanceInterval) return;
+
+    performanceInterval = setInterval(() => {
+        updatePerformanceMetrics();
+    }, 1000); // Update every second
+}
+
+// Performance Dashboard Panel
+function togglePerformancePanel() {
+    const existing = document.getElementById('performancePanel');
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    const sessionTime = Math.floor((Date.now() - performanceStats.sessionStartTime) / 1000);
+    const totalAnnots = Object.values(state.annotations).reduce((sum, anns) => sum + anns.length, 0);
+    const annotatedImages = Object.values(state.annotations).filter(anns => anns.length > 0).length;
+    const avgAnnotsPerImage = annotatedImages > 0 ? (totalAnnots / annotatedImages).toFixed(1) : '0.0';
+    const sessionMinutes = sessionTime / 60 || 1;
+    const annotsPerMin = (totalAnnots / sessionMinutes).toFixed(1);
+
+    // Calculate tool usage
+    const toolCounts = { bbox: 0, polygon: 0, ellipse: 0, keypoint: 0, mask: 0 };
+    Object.values(state.annotations).forEach(anns => {
+        anns.forEach(ann => {
+            if (ann.polygon) toolCounts.polygon++;
+            else if (ann.ellipse) toolCounts.ellipse++;
+            else toolCounts.bbox++;
+        });
+    });
+
+    Object.values(state.keypointAnnotations).forEach(kpData => {
+        if (kpData && kpData.instances) {
+            toolCounts.keypoint += kpData.instances.length;
+        }
+    });
+
+    const html = `
+        <div id="performancePanel" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    background: var(--bg-secondary); border-radius: 12px; padding: 2rem;
+                    box-shadow: var(--shadow); z-index: 10000; max-width: 600px; width: 90%;">
+            <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">📊 Performance Dashboard</h2>
+
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Total Annotations</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--primary);">${totalAnnots}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Annotated Images</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--success);">${annotatedImages} / ${state.images.length}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Annotations/Minute</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${annotsPerMin}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Avg Annotations/Image</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--warning);">${avgAnnotsPerImage}</div>
+                </div>
+            </div>
+
+            <h3 style="margin-bottom: 0.75rem; color: var(--text-primary); font-size: 1rem;">Tool Usage Breakdown</h3>
+            <div style="display: grid; gap: 0.5rem; margin-bottom: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;
+                           padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                    <span style="color: var(--text-secondary);">Bounding Boxes</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">${toolCounts.bbox}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;
+                           padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                    <span style="color: var(--text-secondary);">Polygons</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">${toolCounts.polygon}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;
+                           padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                    <span style="color: var(--text-secondary);">Ellipses</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">${toolCounts.ellipse}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;
+                           padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                    <span style="color: var(--text-secondary);">Keypoints</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">${toolCounts.keypoint}</span>
+                </div>
+            </div>
+
+            <h3 style="margin-bottom: 0.75rem; color: var(--text-primary); font-size: 1rem;">Progress</h3>
+            <div style="margin-bottom: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);">Completion Rate</span>
+                    <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">${((annotatedImages / (state.images.length || 1)) * 100).toFixed(1)}%</span>
+                </div>
+                <div style="width: 100%; height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden;">
+                    <div style="height: 100%; background: linear-gradient(90deg, var(--success), var(--primary)); width: ${((annotatedImages / (state.images.length || 1)) * 100).toFixed(1)}%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+
+            <button onclick="document.getElementById('performancePanel').remove(); document.getElementById('performancePanelOverlay').remove();"
+                    style="width: 100%; padding: 0.75rem;
+                           background: var(--primary); color: white; border: none;
+                           border-radius: 6px; cursor: pointer; font-weight: 500;">
+                Close
+            </button>
+        </div>
+        <div id="performancePanelOverlay" onclick="document.getElementById('performancePanel').remove(); this.remove();"
+             style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0, 0, 0, 0.5); z-index: 9999;"></div>
+    `;
+
+    const panel = document.createElement('div');
+    panel.innerHTML = html;
+    document.body.appendChild(panel);
+
+    window.appLogger?.info('Performance panel opened', {
+        totalAnnots,
+        annotatedImages,
+        annotsPerMin
+    });
+}
+
+// ==================== UI ENHANCEMENTS ====================
+
+// Dark Mode Toggle
+function toggleDarkMode() {
+    const html = document.documentElement;
+    const currentTheme = html.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    html.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+
+    // Update button
+    const btn = document.getElementById('darkModeText');
+    const icon = document.getElementById('darkModeIcon');
+
+    if (newTheme === 'dark') {
+        btn.textContent = 'Light';
+        icon.innerHTML = `
+            <svg viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+        `;
+    } else {
+        btn.textContent = 'Dark';
+        icon.innerHTML = `
+            <svg viewBox="0 0 24 24">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+        `;
+    }
+
+    window.appLogger?.info('Theme toggled', { theme: newTheme });
+}
+
+// Load theme on startup
+function loadTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+
+    if (savedTheme === 'dark') {
+        const btn = document.getElementById('darkModeText');
+        const icon = document.getElementById('darkModeIcon');
+        if (btn) btn.textContent = 'Light';
+        if (icon) {
+            icon.innerHTML = `
+                <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+            `;
+        }
+    }
+}
+
+// Drag and Drop for Images
+function setupDragAndDrop() {
+    const canvasArea = document.querySelector('.canvas-area');
+    if (!canvasArea) return;
+
+    canvasArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        canvasArea.style.opacity = '0.7';
+        canvasArea.style.border = '3px dashed var(--primary)';
+    });
+
+    canvasArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        canvasArea.style.opacity = '1';
+        canvasArea.style.border = 'none';
+    });
+
+    canvasArea.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        canvasArea.style.opacity = '1';
+        canvasArea.style.border = 'none';
+
+        const files = Array.from(e.dataTransfer.files);
+        const imageFiles = files.filter(f => f.type.startsWith('image/'));
+
+        if (imageFiles.length === 0) {
+            alert('No image files found. Please drop image files only.');
+            return;
+        }
+
+        window.appLogger?.info('Images dropped', { count: imageFiles.length });
+
+        // Load dropped images
+        const loadedImages = [];
+        for (let i = 0; i < imageFiles.length; i++) {
+            const file = imageFiles[i];
+            const dataUrl = await new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsDataURL(file);
+            });
+
+            loadedImages.push({
+                id: state.images.length + i,
+                filename: file.name,
+                path: dataUrl,
+                annotated: false
+            });
+        }
+
+        state.images = state.images.concat(loadedImages);
+        renderImageList();
+
+        if (state.currentImageIndex === -1 || state.currentImage === null) {
+            loadImage(0);
+        }
+
+        updateStats();
+        initializeHistory();
+
+        alert(`✅ Loaded ${imageFiles.length} images via drag & drop!`);
+    });
+}
+
+// Keyboard Shortcuts Overlay
+function showKeyboardShortcuts() {
+    const shortcuts = [
+        { key: 'B', description: 'Bounding Box Tool' },
+        { key: 'P', description: 'Polygon Tool' },
+        { key: 'L', description: 'Ellipse Tool' },
+        { key: 'K', description: 'Keypoint Tool' },
+        { key: 'V', description: 'Select Tool' },
+        { key: 'M', description: 'Mask Tool' },
+        { key: 'Space', description: 'Run AI Annotation' },
+        { key: '←/→', description: 'Previous/Next Image' },
+        { key: 'Delete', description: 'Delete Selected' },
+        { key: 'Ctrl+Z', description: 'Undo' },
+        { key: 'Ctrl+Y', description: 'Redo' },
+        { key: 'Ctrl+D', description: 'Toggle Dark Mode' },
+        { key: '?', description: 'Show This Help' },
+        { key: 'Esc', description: 'Cancel Current Operation' }
+    ];
+
+    let html = `
+        <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    background: var(--bg-secondary); border-radius: 12px; padding: 2rem;
+                    box-shadow: var(--shadow); z-index: 10000; max-width: 500px; width: 90%;">
+            <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">⌨️ Keyboard Shortcuts</h2>
+            <div style="display: grid; gap: 0.75rem;">
+    `;
+
+    shortcuts.forEach(s => {
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center;
+                       padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                <span style="color: var(--text-secondary);">${s.description}</span>
+                <kbd style="background: var(--bg-primary); padding: 0.25rem 0.5rem;
+                           border-radius: 4px; font-family: monospace; font-size: 0.9rem;
+                           color: var(--text-primary); border: 1px solid var(--border);">${s.key}</kbd>
+            </div>
+        `;
+    });
+
+    html += `
+            </div>
+            <button onclick="this.parentElement.parentElement.remove()"
+                    style="margin-top: 1.5rem; width: 100%; padding: 0.75rem;
+                           background: var(--primary); color: white; border: none;
+                           border-radius: 6px; cursor: pointer; font-weight: 500;">
+                Got it!
+            </button>
+        </div>
+        <div onclick="this.remove()"
+             style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0, 0, 0, 0.5); z-index: 9999;"></div>
+    `;
+
+    const overlay = document.createElement('div');
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+}
+
+// Enhanced Keyboard Handler
+document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+        return;
+    }
+
+    // Ctrl+D for dark mode
+    if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        e.preventDefault();
+        toggleDarkMode();
+        return;
+    }
+
+    // ? for keyboard shortcuts
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        showKeyboardShortcuts();
+        return;
+    }
+});
+
 // Load saved progress on startup
 window.addEventListener('load', () => {
+    // Load theme first
+    loadTheme();
+
+    // Setup drag and drop
+    setupDragAndDrop();
+
+    // Start performance tracking
+    startPerformanceTracking();
+
     const params = new URLSearchParams(window.location.search);
     const batchJob = params.get('batchJob');
     if (batchJob) {

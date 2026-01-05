@@ -479,54 +479,64 @@
             }
         }
         .storage-browser {
-            border: 1px solid #e2e8f0;
+            border: 1px solid var(--border);
             border-radius: 8px;
             max-height: 250px;
             overflow-y: auto;
-            background: #f7fafc;
+            background: #e8eaf0;
+            color: #000000 !important;
+        }
+        .storage-browser * {
+            color: #000000 !important;
         }
         .folder-item {
             padding: 10px 12px;
             cursor: pointer;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid #cbd5e0;
             display: flex;
             align-items: center;
             gap: 8px;
             transition: background 0.2s;
+            color: #000000 !important;
+            font-weight: 600;
+            background: #ffffff;
         }
         .folder-item:hover {
-            background: #edf2f7;
+            background: #f0f2f5;
         }
         .folder-item:last-child {
             border-bottom: none;
         }
+        .folder-item span {
+            color: #000000 !important;
+            font-weight: 600;
+        }
         .folder-icon {
             font-size: 18px;
+            color: #000000 !important;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 50px; height: 50px; object-fit: contain;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 10px;">
+                <div style="display: flex; align-items: center; gap: 1.25rem;">
+                    <div style="width: 70px; height: 70px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius: 16px; display: flex; align-items: center; justify-content: center; padding: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(99, 102, 241, 0.2);">
+                        <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));">
+                    </div>
                     <div>
-                        <h1 style="margin: 0;">🤖 AI Batch Annotation</h1>
-                        <p style="margin: 5px 0 0 0;">Automatically annotate entire folders with YOLO11 or SAM2</p>
+                        <h1 style="margin: 0; font-size: 1.875rem; font-weight: 700;">🤖 AI Batch Annotation</h1>
+                        <p style="margin: 5px 0 0 0; font-size: 0.875rem; color: var(--text-secondary); font-weight: 400;">Automatically annotate entire folders with YOLO11 or SAM2</p>
                     </div>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn btn-secondary" onclick="window.location.href='/'" style="margin: 0;">🏠 Home</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html'" style="margin: 0;">📷 Camera</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#augment-section'" style="margin: 0;">🎨 Augmentation</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#generate-section'" style="margin: 0;">⚙️ Generate</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#versions-section'" style="margin: 0;">📦 Versions</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/annotator.html'" style="margin: 0;">📝 Annotator</button>
-                    <button class="btn btn-primary" style="margin: 0; background: var(--primary); border-color: var(--primary);">🤖 Batch AI</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/image-collector.html#docs-section'" style="margin: 0;">📚 Docs</button>
-                    <button class="btn btn-secondary" onclick="window.location.href='/logs.html'" style="margin: 0;">📋 Logs</button>
-                </div>
+                <nav style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button onclick="window.location.href='/'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">🏠 Home</button>
+                    <button onclick="window.location.href='/image-collector.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">📷 Camera</button>
+                    <button onclick="window.location.href='/annotator.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">📝 Annotator</button>
+                    <button style="cursor: pointer; padding: 0.625rem 1rem; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); border: 1px solid #818cf8; border-radius: 8px; color: #ffffff; font-weight: 600; font-size: 0.875rem; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3); white-space: nowrap;">🤖 Batch AI</button>
+                    <button onclick="window.location.href='/logs.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">📋 Logs</button>
+                </nav>
             </div>
         </div>
 
@@ -549,7 +559,7 @@
                 <div class="form-group">
                     <label>Current Path</label>
                     <div style="display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="storagePath" readonly style="flex: 1; background: #f7fafc;">
+                        <input type="text" id="storagePath" readonly style="flex: 1; background: #e8eaf0; color: #000000; font-weight: 600; border: 1px solid #cbd5e0; padding: 10px; border-radius: 6px;">
                         <button class="btn btn-secondary" onclick="goUpStorageFolder()" style="margin: 0;">⬆️ Up</button>
                         <button class="btn btn-secondary" onclick="copyPathToClipboard()" style="margin: 0;">📋 Copy</button>
                     </div>

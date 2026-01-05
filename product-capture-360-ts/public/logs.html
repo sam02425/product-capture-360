@@ -251,25 +251,23 @@
 </head>
 <body>
     <div class="header">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 50px; height: 50px; object-fit: contain;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 1.25rem;">
+                <div style="width: 70px; height: 70px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius: 16px; display: flex; align-items: center; justify-content: center; padding: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(59, 130, 246, 0.3);">
+                    <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));">
+                </div>
                 <div>
-                    <h1 style="margin: 0;">📋 System Logs</h1>
-                    <p style="margin: 5px 0 0 0;">Monitor and analyze application activity</p>
+                    <h1 style="margin: 0; font-size: 1.875rem; font-weight: 700; color: #f1f5f9;">📋 System Logs</h1>
+                    <p style="margin: 5px 0 0 0; font-size: 0.875rem; color: #94a3b8; font-weight: 400;">Monitor and analyze application activity</p>
                 </div>
             </div>
-            <div style="display: flex; gap: 10px;">
-                <button onclick="window.location.href='/'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🏠 Home</button>
-                <button onclick="window.location.href='/image-collector.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📷 Camera</button>
-                <button onclick="window.location.href='/image-collector.html#augment-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🎨 Augmentation</button>
-                <button onclick="window.location.href='/image-collector.html#generate-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">⚙️ Generate</button>
-                <button onclick="window.location.href='/image-collector.html#versions-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📦 Versions</button>
-                <button onclick="window.location.href='/annotator.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📝 Annotator</button>
-                <button onclick="window.location.href='/batch-annotator.html'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">🤖 Batch AI</button>
-                <button onclick="window.location.href='/image-collector.html#docs-section'" style="cursor: pointer; padding: 10px 20px; background: #334155; border: none; border-radius: 5px; color: white; font-weight: 600;">📚 Docs</button>
-                <button style="cursor: pointer; padding: 10px 20px; background: #3b82f6; border: none; border-radius: 5px; color: white; font-weight: 600;">📋 Logs</button>
-            </div>
+            <nav style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button onclick="window.location.href='/'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">🏠 Home</button>
+                <button onclick="window.location.href='/image-collector.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">📷 Camera</button>
+                <button onclick="window.location.href='/annotator.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">📝 Annotator</button>
+                <button onclick="window.location.href='/batch-annotator.html'" style="cursor: pointer; padding: 0.625rem 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9'; this.style.borderColor='#475569';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1'; this.style.borderColor='#334155';">🤖 Batch AI</button>
+                <button style="cursor: pointer; padding: 0.625rem 1rem; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); border: 1px solid #60a5fa; border-radius: 8px; color: #ffffff; font-weight: 600; font-size: 0.875rem; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3); white-space: nowrap;">📋 Logs</button>
+            </nav>
         </div>
     </div>
 

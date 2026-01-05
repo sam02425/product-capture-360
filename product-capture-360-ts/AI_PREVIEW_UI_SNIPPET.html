@@ -1,0 +1,74 @@
+<!--
+  AI PREVIEW MODE UI CONTROLS
+
+  INSTRUCTIONS:
+  1. Open public/annotator.html
+  2. Find line 998 (search for "AI Detect")
+  3. Add this snippet AFTER the </button> closing tag (around line 996)
+  4. Save and refresh the page
+  5. Click "AI Detect" button to see preview mode!
+
+  This completes the AI Preview Mode feature.
+-->
+
+<!-- AI Preview Controls -->
+<div id="aiPreviewControls" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border: 1px solid var(--border-default);">
+    <!-- Header -->
+    <div style="margin-bottom: 0.75rem;">
+        <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.9375rem;">
+            🎯 AI Detection Preview
+        </div>
+        <div id="aiPreviewStats" style="color: var(--text-secondary); font-size: 0.875rem;">
+            0 of 0 selected
+        </div>
+    </div>
+
+    <!-- Selection Controls -->
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+        <button class="btn btn-sm btn-secondary" onclick="selectAllPreviews()" style="flex: 1; min-width: 120px;">
+            ☑️ Select All
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="deselectAllPreviews()" style="flex: 1; min-width: 120px;">
+            ☐ Deselect All
+        </button>
+    </div>
+
+    <!-- Action Buttons -->
+    <div style="display: flex; gap: 0.5rem;">
+        <button class="btn btn-sm btn-success" onclick="acceptSelectedDetections()" style="flex: 1;">
+            ✓ Accept Selected
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="rejectAllPreviews()" style="flex: 1;">
+            ✗ Reject All
+        </button>
+    </div>
+
+    <!-- Help Text -->
+    <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-default); font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.4;">
+        💡 <strong>Tip:</strong> Click boxes to toggle selection, press <kbd style="padding: 0.125rem 0.25rem; background: var(--bg-primary); border-radius: 3px; font-family: monospace; font-size: 0.7rem;">Enter</kbd> to accept, <kbd style="padding: 0.125rem 0.25rem; background: var(--bg-primary); border-radius: 3px; font-family: monospace; font-size: 0.7rem;">ESC</kbd> to reject
+    </div>
+</div>
+
+<!--
+  USAGE:
+
+  1. Click "AI Detect" button (or press 'A' key)
+  2. Wait for detections to load
+  3. Green boxes = selected, Amber boxes = unselected
+  4. Click on any box to toggle selection
+  5. Use "Select All" / "Deselect All" buttons
+  6. Click "Accept Selected" or press Enter
+  7. OR click "Reject All" or press ESC
+
+  FEATURES:
+  - Shows ALL detections (not just best one)
+  - Confidence percentage on each box
+  - Checkbox indicator on selected boxes
+  - Keyboard shortcuts (Enter/ESC)
+  - Click to toggle individual boxes
+
+  TROUBLESHOOTING:
+  - If preview doesn't show: Check browser console for errors
+  - If buttons don't work: Make sure annotator.js has the preview functions
+  - If styling is wrong: Check that design-system.css is loaded
+-->

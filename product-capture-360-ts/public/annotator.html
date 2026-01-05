@@ -30,6 +30,28 @@
             --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
         }
 
+        /* Dark Mode Theme */
+        [data-theme="dark"] {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-dim: #64748b;
+            --border: #334155;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --accent: #06b6d4;
+            --shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        [data-theme="dark"] body {
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        }
+
         body {
             font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
             background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
@@ -760,6 +782,14 @@
         }
 
         /* Storage Browser Styles */
+        #storageBrowser {
+            color: #000000 !important;
+        }
+
+        #storageBrowser * {
+            color: #000000 !important;
+        }
+
         .folder-item {
             padding: 0.5rem 0.75rem;
             cursor: pointer;
@@ -769,10 +799,17 @@
             gap: 0.5rem;
             transition: background 0.2s;
             font-size: 0.8rem;
+            color: #000000 !important;
+            font-weight: 600;
         }
 
         .folder-item:hover {
             background: rgba(37, 99, 235, 0.08);
+        }
+
+        .folder-item span {
+            color: #000000 !important;
+            font-weight: 600;
         }
 
         .folder-item:last-child {
@@ -791,7 +828,22 @@
             <img src="/eyeai_logo.png" alt="EYEai Logo" style="width: 36px; height: 36px; object-fit: contain; margin-right: 8px;">
             <span>Professional Annotator</span>
         </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <button onclick="window.location.href='/'" style="cursor: pointer; padding: 0.5rem 0.875rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1';">🏠 Home</button>
+            <button onclick="window.location.href='/image-collector.html'" style="cursor: pointer; padding: 0.5rem 0.875rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1';">📷 Camera</button>
+            <button style="cursor: pointer; padding: 0.5rem 0.875rem; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); border: 1px solid #818cf8; border-radius: 8px; color: #ffffff; font-weight: 600; font-size: 0.875rem; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3); white-space: nowrap;">📝 Annotator</button>
+            <button onclick="window.location.href='/batch-annotator.html'" style="cursor: pointer; padding: 0.5rem 0.875rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1';">🤖 Batch AI</button>
+            <button onclick="window.location.href='/logs.html'" style="cursor: pointer; padding: 0.5rem 0.875rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; font-weight: 500; font-size: 0.875rem; transition: all 0.2s ease; white-space: nowrap;" onmouseover="this.style.background='#334155'; this.style.color='#f1f5f9';" onmouseout="this.style.background='#1e293b'; this.style.color='#cbd5e1';">📋 Logs</button>
+        </div>
         <div class="navbar-actions">
+            <button class="btn btn-secondary btn-sm" onclick="toggleDarkMode()" id="darkModeBtn" title="Toggle Dark Mode (Ctrl+D)">
+                <span class="icon" aria-hidden="true" id="darkModeIcon">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </span>
+                <span id="darkModeText">Dark</span>
+            </button>
             <button class="btn btn-secondary btn-sm" onclick="showShortcuts()">
                 <span class="icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24">
@@ -813,7 +865,12 @@
                 </span>
                 Save Progress
             </button>
-            <button class="btn btn-success btn-sm" onclick="exportAnnotations()">
+            <select id="exportFormat" class="btn btn-sm" style="margin-right: 0.5rem; padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary);">
+                <option value="yolo">YOLO</option>
+                <option value="coco">COCO JSON</option>
+                <option value="voc">Pascal VOC XML</option>
+            </select>
+            <button class="btn btn-success btn-sm" onclick="exportAnnotations(document.getElementById('exportFormat').value)">
                 <span class="icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M3 7h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path>
@@ -855,13 +912,13 @@
                 <div style="margin-bottom: 0.75rem;">
                     <label style="font-size: 0.75rem; color: var(--text-secondary);">Current Path</label>
                     <div style="display: flex; gap: 4px;">
-                        <input type="text" id="storagePath" readonly style="flex: 1; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.75rem; background: var(--bg-tertiary); font-family: monospace;">
+                        <input type="text" id="storagePath" readonly style="flex: 1; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.75rem; background: #ffffff; color: #1a202c; font-family: monospace;">
                         <button class="btn btn-secondary btn-sm" onclick="goUpStorageFolder()" title="Go Up" style="padding: 0.5rem;">⬆️</button>
                     </div>
                 </div>
                 <div style="margin-bottom: 0.75rem;">
-                    <div id="storageBrowser" style="border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: var(--bg-tertiary); font-size: 0.8rem;">
-                        <div style="padding: 30px 10px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">
+                    <div id="storageBrowser" style="border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: #ffffff; font-size: 0.8rem;">
+                        <div style="padding: 30px 10px; text-align: center; color: #4a5568; font-size: 0.75rem;">
                             Select a location to browse
                         </div>
                     </div>
@@ -906,6 +963,35 @@
             </div>
 
             <div class="sidebar-section">
+                <h3>🎥 Video Frames</h3>
+                <div style="margin-bottom: 0.75rem;">
+                    <label>Video File</label>
+                    <input type="file" id="videoFile" accept="video/*" onchange="handleVideoUpload(this)" style="padding: 0.35rem 0.5rem; font-size: 0.75rem;">
+                </div>
+                <div style="margin-bottom: 0.75rem;">
+                    <label>Extract Every Nth Frame</label>
+                    <input type="number" id="frameInterval" min="1" max="60" value="5" style="width: 100%;">
+                </div>
+                <button class="btn btn-secondary btn-sm" style="width: 100%; margin-bottom: 0.5rem;" onclick="extractVideoFrames()" id="extractFramesBtn" disabled>
+                    <span class="icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24">
+                            <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                            <path d="M10 9l5 3-5 3z"></path>
+                        </svg>
+                    </span>
+                    Extract Frames
+                </button>
+                <div id="videoProgress" style="display: none; margin-top: 0.5rem;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                        <span id="videoProgressText">Extracting frames...</span>
+                    </div>
+                    <div style="width: 100%; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;">
+                        <div id="videoProgressBar" style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
                 <h3>Images (<span id="imageCount">0</span>)</h3>
                 <input type="text" placeholder="Search images..." style="margin-bottom: 0.5rem;" oninput="filterImages(this.value)">
             </div>
@@ -938,6 +1024,27 @@
                         </span>
                         Box
                     </button>
+                    <button class="tool-btn" data-tool="ellipse" onclick="setTool('ellipse')" title="Ellipse (L)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <ellipse cx="12" cy="12" rx="8" ry="5"></ellipse>
+                            </svg>
+                        </span>
+                        Ellipse
+                    </button>
+                    <button class="tool-btn" data-tool="keypoint" onclick="setTool('keypoint')" title="Keypoint (K)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="6" r="2"></circle>
+                                <circle cx="12" cy="18" r="2"></circle>
+                                <circle cx="6" cy="12" r="2"></circle>
+                                <circle cx="18" cy="12" r="2"></circle>
+                                <line x1="12" y1="8" x2="12" y2="16" stroke="currentColor" stroke-width="2"></line>
+                                <line x1="8" y1="12" x2="16" y2="12" stroke="currentColor" stroke-width="2"></line>
+                            </svg>
+                        </span>
+                        Keypoint
+                    </button>
                     <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)">
                         <span class="icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24">
@@ -945,6 +1052,33 @@
                             </svg>
                         </span>
                         Select
+                    </button>
+                    <button class="tool-btn" data-tool="brush" onclick="setTool('brush')" title="Brush (M)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="16" r="3"></circle>
+                                <path d="M12 13 L12 4 M12 4 L8 8 M12 4 L16 8"></path>
+                            </svg>
+                        </span>
+                        Brush
+                    </button>
+                    <button class="tool-btn" data-tool="eraser" onclick="setTool('eraser')" title="Eraser (E)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M7 21h10"></path>
+                                <path d="M5 11l7-7 5 5-7 7H5l0-5z"></path>
+                            </svg>
+                        </span>
+                        Eraser
+                    </button>
+                    <button class="tool-btn" data-tool="fill" onclick="setTool('fill')" title="Fill (F)">
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M17 13l-4-4-8 8v3h3l8-8z"></path>
+                                <circle cx="19" cy="19" r="2"></circle>
+                            </svg>
+                        </span>
+                        Fill
                     </button>
                 </div>
 
@@ -1007,6 +1141,7 @@
             <!-- Canvas -->
             <div class="canvas-container" id="canvasContainer">
                 <canvas id="annotationCanvas" tabindex="0"></canvas>
+                <canvas id="maskCanvas" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
 
                 <div class="zoom-controls">
                     <button class="zoom-btn" onclick="zoomIn()" title="Zoom In (+)">+</button>
@@ -1033,6 +1168,76 @@
                     <div class="stat-label">Tool</div>
                     <div class="stat-value" id="currentTool">Box</div>
                 </div>
+                <div class="stat-item">
+                    <div class="stat-label">Annotations/Min</div>
+                    <div class="stat-value" style="color: var(--accent);"><span id="annotsPerMin">0.0</span></div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Session Time</div>
+                    <div class="stat-value" style="color: var(--text-secondary);"><span id="sessionTime">00:00</span></div>
+                </div>
+                <div class="stat-item" style="cursor: pointer;" onclick="togglePerformancePanel()" title="Click for detailed metrics">
+                    <div class="stat-label">📊 Performance</div>
+                    <div class="stat-value" style="color: var(--primary); font-size: 0.75rem;">View Details</div>
+                </div>
+            </div>
+
+            <!-- Video Timeline (Hidden by default) -->
+            <div id="videoTimeline" style="display: none; background: var(--bg-secondary); border-top: 1px solid var(--border); padding: 0.75rem 1rem;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="previousFrame()" title="Previous Frame (←)">
+                        <span class="icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M15 18l-6-6 6-6"></path>
+                            </svg>
+                        </span>
+                    </button>
+                    <div style="flex: 1;">
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 0.25rem; display: flex; justify-content: space-between;">
+                            <span>Frame: <span id="currentFrameNum">0</span> / <span id="totalFrames">0</span></span>
+                            <span>Time: <span id="frameTimestamp">0:00</span></span>
+                        </div>
+                        <input type="range" id="frameSlider" min="0" max="0" value="0"
+                               style="width: 100%; cursor: pointer;"
+                               oninput="seekToFrame(parseInt(this.value))">
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="nextFrame()" title="Next Frame (→)">
+                        <span class="icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M9 18l6-6-6-6"></path>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+
+                <!-- Tracking Controls -->
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border);">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; margin: 0;">
+                        <input type="checkbox" id="trackingEnabled" onchange="toggleTracking(this.checked)" style="width: auto;">
+                        Enable Tracking
+                    </label>
+                    <button class="btn btn-secondary btn-sm" onclick="propagateAnnotation()" id="propagateBtn" disabled title="Propagate selected annotation to next frame">
+                        <span class="icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M5 12h14"></path>
+                                <path d="M12 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                        Propagate
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="autoTrackForward()" id="autoTrackBtn" disabled title="Auto-track selected object forward">
+                        <span class="icon">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M12 1v6m0 6v6M23 12h-6M7 12H1"></path>
+                            </svg>
+                        </span>
+                        Auto-Track
+                    </button>
+                    <span id="trackingStatus" style="font-size: 0.7rem; color: var(--text-secondary); margin-left: auto;">
+                        Tracks: <span id="trackCount">0</span>
+                    </span>
+                </div>
             </div>
         </div>
 
@@ -1045,6 +1250,27 @@
                     <!-- Labels will be added here -->
                 </div>
                 <button class="btn btn-secondary btn-sm" style="width: 100%; margin-top: 0.5rem;" onclick="addNewLabel()">+ Add Label</button>
+            </div>
+
+            <!-- Mask Tool Controls -->
+            <div class="sidebar-section" id="maskToolControls" style="display: none;">
+                <h3>Mask Tools</h3>
+                <div style="margin-top: 0.75rem;">
+                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                        Brush Size: <span id="brushSizeValue">20</span>px
+                    </label>
+                    <input type="range" id="brushSizeSlider" min="5" max="100" value="20"
+                           style="width: 100%;"
+                           oninput="updateBrushSize(this.value)">
+                </div>
+                <div style="margin-top: 0.75rem;">
+                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                        Opacity: <span id="brushOpacityValue">70</span>%
+                    </label>
+                    <input type="range" id="brushOpacitySlider" min="10" max="100" value="70"
+                           style="width: 100%;"
+                           oninput="updateBrushOpacity(this.value)">
+                </div>
             </div>
 
             <!-- Annotations -->
@@ -1080,8 +1306,32 @@
             <span class="kbd">B</span>
         </div>
         <div class="shortcut-row">
+            <span>Ellipse</span>
+            <span class="kbd">L</span>
+        </div>
+        <div class="shortcut-row">
+            <span>Keypoint</span>
+            <span class="kbd">K</span>
+        </div>
+        <div class="shortcut-row">
+            <span>Polygon</span>
+            <span class="kbd">P</span>
+        </div>
+        <div class="shortcut-row">
             <span>Select</span>
             <span class="kbd">V</span>
+        </div>
+        <div class="shortcut-row">
+            <span>Brush (Mask)</span>
+            <span class="kbd">M</span>
+        </div>
+        <div class="shortcut-row">
+            <span>Eraser</span>
+            <span class="kbd">E</span>
+        </div>
+        <div class="shortcut-row">
+            <span>Fill</span>
+            <span class="kbd">F</span>
         </div>
 
         <h3 style="margin: 1rem 0 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">ACTIONS</h3>
@@ -1124,6 +1374,9 @@
 
             <button class="btn btn-primary" style="width: 100%; margin-top: 1.5rem;" onclick="hideShortcuts()">Close</button>
     </div>
+
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script src="/logger.js"></script>
     <script src="/annotator.js"></script>
