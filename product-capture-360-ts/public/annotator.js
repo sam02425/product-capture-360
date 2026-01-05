@@ -95,6 +95,81 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
+/**
+ * Show loading overlay for async operations
+ * @param {string} message - Loading message to display
+ * @returns {Object} - Control object with hide() and updateMessage() methods
+ */
+function showLoadingOverlay(message = 'Loading...') {
+    // Remove existing overlay if present
+    const existing = document.getElementById('loadingOverlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'loadingOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10001;
+        backdrop-filter: blur(4px);
+    `;
+
+    overlay.innerHTML = `
+        <div style="
+            background: #1e293b;
+            padding: 32px 48px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            border: 1px solid #334155;
+        ">
+            <div style="
+                width: 48px;
+                height: 48px;
+                border: 4px solid #334155;
+                border-top-color: #3b82f6;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            "></div>
+            <div id="loadingMessage" style="
+                color: #f1f5f9;
+                font-size: 16px;
+                font-weight: 500;
+            ">${message}</div>
+        </div>
+        <style>
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+        </style>
+    `;
+
+    document.body.appendChild(overlay);
+
+    return {
+        hide: () => {
+            overlay.style.opacity = '0';
+            overlay.style.transition = 'opacity 0.3s ease-out';
+            setTimeout(() => overlay.remove(), 300);
+        },
+        updateMessage: (newMessage) => {
+            const messageEl = document.getElementById('loadingMessage');
+            if (messageEl) messageEl.textContent = newMessage;
+        }
+    };
+}
+
 // Global State
 const state = {
     images: [],
@@ -113,6 +188,7 @@ const state = {
     isDrawing: false,
     startPoint: null,
     currentPoint: null,
+    aiConfidenceThreshold: 0.5,  // AI detection confidence threshold (0.1 - 0.95)
     history: [],
     historyIndex: -1,
     canvas: null,
@@ -764,7 +840,19 @@ function render() {
         const color = label ? label.color : '#3b82f6';
         const isSelected = state.selectedAnnotationId === idx;
 
-        drawBoundingBox(ann.bbox, color, isSelected, label ? label.name : '', ann.polygon, ann.ellipse, ann.confidence, ann.trackId);
+        // Convert normalized coordinates to canvas coordinates for display
+        const displayBbox = normalizedToCanvas(ann.bbox);
+        const displayPolygon = ann.polygon ? ann.polygon.map(p => {
+            const canvasP = normalizedToCanvas({x: p.x, y: p.y, width: 0, height: 0});
+            return {x: canvasP.x, y: canvasP.y};
+        }) : null;
+        const displayEllipse = ann.ellipse ? {
+            center: normalizedToCanvas({x: ann.ellipse.center.x, y: ann.ellipse.center.y, width: 0, height: 0}),
+            radiusX: ann.ellipse.radiusX * state.canvas.width / state.currentImage.naturalWidth,
+            radiusY: ann.ellipse.radiusY * state.canvas.height / state.currentImage.naturalHeight
+        } : null;
+
+        drawBoundingBox(displayBbox, color, isSelected, label ? label.name : '', displayPolygon, displayEllipse, ann.confidence, ann.trackId);
     });
 
     // Draw AI preview detections
@@ -1332,6 +1420,41 @@ function handleTouchEnd(e) {
     handleMouseUp({ clientX: 0, clientY: 0 });
 }
 
+/**
+ * Convert canvas coordinates to normalized coordinates [0-1] based on original image dimensions
+ * This preserves precision regardless of canvas size
+ */
+function canvasToNormalized(bbox) {
+    if (!state.currentImage) return bbox;
+
+    const scaleX = state.currentImage.naturalWidth / state.canvas.width;
+    const scaleY = state.currentImage.naturalHeight / state.canvas.height;
+
+    return {
+        x: bbox.x * scaleX / state.currentImage.naturalWidth,
+        y: bbox.y * scaleY / state.currentImage.naturalHeight,
+        width: bbox.width * scaleX / state.currentImage.naturalWidth,
+        height: bbox.height * scaleY / state.currentImage.naturalHeight
+    };
+}
+
+/**
+ * Convert normalized coordinates [0-1] to canvas coordinates for display
+ */
+function normalizedToCanvas(normalized) {
+    if (!state.currentImage) return normalized;
+
+    const scaleX = state.canvas.width / state.currentImage.naturalWidth;
+    const scaleY = state.canvas.height / state.currentImage.naturalHeight;
+
+    return {
+        x: normalized.x * state.currentImage.naturalWidth * scaleX,
+        y: normalized.y * state.currentImage.naturalHeight * scaleY,
+        width: normalized.width * state.currentImage.naturalWidth * scaleX,
+        height: normalized.height * state.currentImage.naturalHeight * scaleY
+    };
+}
+
 // Annotations Management
 function addAnnotation(bbox, options = {}) {
     const currentImageId = state.images[state.currentImageIndex].id;
@@ -1349,9 +1472,12 @@ function addAnnotation(bbox, options = {}) {
         state.annotations[currentImageId] = [];
     }
 
+    // Store in normalized coordinates to preserve precision
+    const normalizedBbox = canvasToNormalized(bbox);
+
     const annotation = {
         labelId,
-        bbox: bbox,
+        bbox: normalizedBbox,  // Store normalized [0-1] coordinates
         confidence,
         createdBy
     };
@@ -1386,10 +1512,15 @@ function addPolygonAnnotation(points) {
         height: Math.max(...ys) - Math.min(...ys)
     };
 
+    // Normalize polygon points and bbox
+    const normalizedBbox = canvasToNormalized(bbox);
+    const normalizedPoints = points.map(p => canvasToNormalized({x: p.x, y: p.y, width: 0, height: 0}))
+        .map(np => ({x: np.x, y: np.y}));
+
     const annotation = {
         labelId: state.selectedLabelId,
-        bbox: bbox,
-        polygon: points,  // Store polygon points
+        bbox: normalizedBbox,
+        polygon: normalizedPoints,  // Store normalized polygon points
         confidence: 1.0,
         createdBy: 'manual'
     };
@@ -1749,11 +1880,26 @@ function getDatasetLabelName() {
 }
 
 function getAiConfidenceThreshold() {
-    const input = document.getElementById('aiConfidence');
-    const rawValue = input && input.value !== undefined ? input.value : '';
-    const parsed = Number(rawValue);
-    if (!Number.isFinite(parsed)) return 0.85;
-    return Math.min(1, Math.max(0, parsed));
+    // Return from state if available, otherwise use default
+    return state.aiConfidenceThreshold || 0.5;
+}
+
+/**
+ * Update AI confidence threshold from slider
+ */
+function updateAIConfidenceThreshold(value) {
+    const threshold = parseInt(value) / 100; // Convert 10-95 to 0.1-0.95
+    state.aiConfidenceThreshold = threshold;
+
+    // Update label display
+    const label = document.getElementById('aiThresholdLabel');
+    if (label) {
+        label.textContent = threshold.toFixed(2);
+    }
+
+    window.appLogger?.debug('AI confidence threshold updated', {
+        value: threshold
+    });
 }
 
 function setupAiThresholdLabel() {
@@ -2464,6 +2610,8 @@ async function aiAutoAnnotate() {
     const confirmed = confirm(`Use AI to ${engineLabel} in this image?`);
     if (!confirmed) return;
 
+    const loading = showLoadingOverlay(`Running ${engine.toUpperCase()} AI...`);
+
     try {
         const imageData = state.images[state.currentImageIndex];
         const datasetLabel = getDatasetLabelName();
@@ -2476,6 +2624,7 @@ async function aiAutoAnnotate() {
 
         if (engine === 'sam2') {
             if (state.selectedAnnotationId === null) {
+                loading.hide();
                 alert('Select or draw a rough box first, then refine with SAM2.');
                 return;
             }
@@ -2484,10 +2633,12 @@ async function aiAutoAnnotate() {
             const annotations = state.annotations[currentImageId] || [];
             const selected = annotations[state.selectedAnnotationId];
             if (!selected) {
+                loading.hide();
                 alert('Selected annotation not found.');
                 return;
             }
 
+            loading.updateMessage('Refining with SAM2...');
             setSam2SpinnerVisible(true);
             const toImageScaleX = state.currentImage.width / state.canvas.width;
             const toImageScaleY = state.currentImage.height / state.canvas.height;
@@ -2534,13 +2685,18 @@ async function aiAutoAnnotate() {
             updateStats();
             setSam2SpinnerVisible(false);
             showSam2DoneTick();
+            loading.hide();
+            showToast('SAM2 refinement complete!', 'success');
             return;
         }
 
         if (engine === 'gemini') {
+            loading.hide();
             alert('Gemini auto-annotation is not configured yet.');
             return;
         }
+
+        loading.updateMessage('Detecting objects with YOLO...');
 
         const response = await fetch('/api/auto-annotate', {
             method: 'POST',
@@ -2565,6 +2721,7 @@ async function aiAutoAnnotate() {
 
         const detections = Array.isArray(payload.detections) ? payload.detections : [];
         if (detections.length === 0) {
+            loading.hide();
             alert('No bottle detected at the current threshold.');
             return;
         }
@@ -2593,8 +2750,12 @@ async function aiAutoAnnotate() {
             const annotations = state.annotations[currentImageId] || [];
             const lastIndex = annotations.length - 1;
             const created = annotations[lastIndex];
-            if (!created) return;
+            if (!created) {
+                loading.hide();
+                return;
+            }
 
+            loading.updateMessage('Refining detection with SAM2...');
             setSam2SpinnerVisible(true);
             const toImageScaleX = state.currentImage.width / state.canvas.width;
             const toImageScaleY = state.currentImage.height / state.canvas.height;
@@ -2641,16 +2802,24 @@ async function aiAutoAnnotate() {
             updateStats();
             setSam2SpinnerVisible(false);
             showSam2DoneTick();
+            loading.hide();
+            showToast('AI annotation complete!', 'success');
+        } else {
+            loading.hide();
+            showToast('AI detection complete!', 'success');
         }
     } catch (error) {
+        loading.hide();
         setSam2SpinnerVisible(false);
         console.error('AI annotation error:', error);
+        showToast('AI annotation failed: ' + error.message, 'error');
         alert('AI annotation failed: ' + error.message);
     }
 }
 
 // Save Progress
 async function saveProgress() {
+    const loading = showLoadingOverlay('Saving progress...');
     try {
         const data = {
             annotations: state.annotations,
@@ -2662,9 +2831,12 @@ async function saveProgress() {
         // Save to local storage
         localStorage.setItem('annotation_progress', JSON.stringify(data));
 
-        alert('✅ Progress saved successfully!');
+        loading.hide();
+        showToast('Progress saved successfully!', 'success');
     } catch (error) {
+        loading.hide();
         console.error('Save error:', error);
+        showToast('Failed to save progress', 'error');
         alert('Failed to save progress');
     }
 }
@@ -2753,9 +2925,66 @@ function maskToPolygon(maskData, imageId) {
 
 // Export Annotations with multiple format support
 async function exportAnnotations(format = 'yolo') {
+    const loading = showLoadingOverlay(`Exporting annotations (${format.toUpperCase()})...`);
     try {
-        const imgWidth = state.currentImage ? state.currentImage.width : state.canvas.width;
-        const imgHeight = state.currentImage ? state.currentImage.height : state.canvas.height;
+        // Validate all annotations before export
+        const invalidAnnotations = [];
+        const allImages = state.images;
+
+        allImages.forEach(image => {
+            const annotations = state.annotations[image.id] || [];
+            annotations.forEach((ann, idx) => {
+                // Validate bbox coordinates (should be normalized [0-1])
+                const errors = [];
+                if (ann.bbox.x < 0 || ann.bbox.x > 1) errors.push('x out of range');
+                if (ann.bbox.y < 0 || ann.bbox.y > 1) errors.push('y out of range');
+                if (ann.bbox.width < 0 || ann.bbox.width > 1) errors.push('width out of range');
+                if (ann.bbox.height < 0 || ann.bbox.height > 1) errors.push('height out of range');
+                if (ann.bbox.x + ann.bbox.width > 1) errors.push('bbox extends beyond right edge');
+                if (ann.bbox.y + ann.bbox.height > 1) errors.push('bbox extends beyond bottom edge');
+
+                // Validate polygon if present
+                if (ann.polygon) {
+                    ann.polygon.forEach((p, pIdx) => {
+                        if (p.x < 0 || p.x > 1) errors.push(`polygon point ${pIdx} x out of range`);
+                        if (p.y < 0 || p.y > 1) errors.push(`polygon point ${pIdx} y out of range`);
+                    });
+                }
+
+                if (errors.length > 0) {
+                    invalidAnnotations.push({
+                        image: image.filename,
+                        index: idx,
+                        errors: errors
+                    });
+                }
+            });
+        });
+
+        // If invalid annotations found, ask user
+        if (invalidAnnotations.length > 0) {
+            const errorMsg = `Found ${invalidAnnotations.length} invalid annotation(s):\n\n` +
+                invalidAnnotations.slice(0, 5).map(inv =>
+                    `${inv.image} annotation #${inv.index}: ${inv.errors.join(', ')}`
+                ).join('\n') +
+                (invalidAnnotations.length > 5 ? `\n\n...and ${invalidAnnotations.length - 5} more` : '');
+
+            const proceed = confirm(errorMsg + '\n\nExport anyway? (Invalid annotations may cause issues)');
+            if (!proceed) {
+                loading.hide();
+                showToast('Export cancelled', 'info');
+                return;
+            }
+
+            window.appLogger?.warn('Exporting with invalid annotations', {
+                count: invalidAnnotations.length,
+                format: format
+            });
+        }
+
+        // Use original image dimensions for export (naturalWidth/naturalHeight)
+        const imgWidth = state.currentImage ? state.currentImage.naturalWidth : state.canvas.width;
+        const imgHeight = state.currentImage ? state.currentImage.naturalHeight : state.canvas.height;
 
         if (format === 'coco') {
             // COCO JSON format
@@ -2788,9 +3017,7 @@ async function exportAnnotations(format = 'yolo') {
 
                 const annotations = state.annotations[image.id] || [];
                 annotations.forEach(ann => {
-                    const scaleX = imgWidth / state.canvas.width;
-                    const scaleY = imgHeight / state.canvas.height;
-
+                    // Convert normalized coordinates [0-1] to pixel coordinates
                     const annotation = {
                         id: annotationId++,
                         image_id: image.id,
@@ -2803,34 +3030,39 @@ async function exportAnnotations(format = 'yolo') {
                         // Ellipse - approximate as polygon for COCO format
                         const numPoints = 32; // Number of points to approximate ellipse
                         const points = [];
+                        const centerX = ann.ellipse.center.x * imgWidth;
+                        const centerY = ann.ellipse.center.y * imgHeight;
+                        const radX = ann.ellipse.radiusX * imgWidth;
+                        const radY = ann.ellipse.radiusY * imgHeight;
+
                         for (let i = 0; i < numPoints; i++) {
                             const angle = (i / numPoints) * 2 * Math.PI;
-                            const x = (ann.ellipse.center.x + Math.cos(angle) * ann.ellipse.radiusX) * scaleX;
-                            const y = (ann.ellipse.center.y + Math.sin(angle) * ann.ellipse.radiusY) * scaleY;
+                            const x = centerX + Math.cos(angle) * radX;
+                            const y = centerY + Math.sin(angle) * radY;
                             points.push(x, y);
                         }
                         annotation.segmentation = [points];
 
                         // Bounding box from ellipse
                         const bbox = [
-                            (ann.ellipse.center.x - ann.ellipse.radiusX) * scaleX,
-                            (ann.ellipse.center.y - ann.ellipse.radiusY) * scaleY,
-                            ann.ellipse.radiusX * 2 * scaleX,
-                            ann.ellipse.radiusY * 2 * scaleY
+                            centerX - radX,
+                            centerY - radY,
+                            radX * 2,
+                            radY * 2
                         ];
                         annotation.bbox = bbox;
-                        annotation.area = Math.PI * ann.ellipse.radiusX * ann.ellipse.radiusY * scaleX * scaleY;
+                        annotation.area = Math.PI * radX * radY;
                     } else if (ann.polygon && ann.polygon.length > 0) {
-                        // Polygon segmentation
+                        // Polygon segmentation - convert normalized to pixels
                         const points = ann.polygon.flatMap(p => [
-                            p.x * scaleX,
-                            p.y * scaleY
+                            p.x * imgWidth,
+                            p.y * imgHeight
                         ]);
                         annotation.segmentation = [points];
 
                         // Calculate bbox and area from polygon
-                        const xs = ann.polygon.map(p => p.x * scaleX);
-                        const ys = ann.polygon.map(p => p.y * scaleY);
+                        const xs = ann.polygon.map(p => p.x * imgWidth);
+                        const ys = ann.polygon.map(p => p.y * imgHeight);
                         const bbox = [
                             Math.min(...xs),
                             Math.min(...ys),
@@ -2840,12 +3072,12 @@ async function exportAnnotations(format = 'yolo') {
                         annotation.bbox = bbox;
                         annotation.area = bbox[2] * bbox[3];
                     } else {
-                        // Bounding box
+                        // Bounding box - convert normalized to pixels
                         const bbox = [
-                            ann.bbox.x * scaleX,
-                            ann.bbox.y * scaleY,
-                            ann.bbox.width * scaleX,
-                            ann.bbox.height * scaleY
+                            ann.bbox.x * imgWidth,
+                            ann.bbox.y * imgHeight,
+                            ann.bbox.width * imgWidth,
+                            ann.bbox.height * imgHeight
                         ];
                         annotation.bbox = bbox;
                         annotation.area = bbox[2] * bbox[3];
@@ -2985,9 +3217,6 @@ async function exportAnnotations(format = 'yolo') {
 
                 if (annotations.length === 0) return; // Skip images without annotations
 
-                const scaleX = imgWidth / state.canvas.width;
-                const scaleY = imgHeight / state.canvas.height;
-
                 // Create XML document
                 let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
                 xml += '<annotation>\n';
@@ -3009,29 +3238,33 @@ async function exportAnnotations(format = 'yolo') {
                     const label = state.labels.find(l => l.id === ann.labelId);
                     const labelName = label ? label.name : 'unknown';
 
-                    // Calculate bounding box in image coordinates
+                    // Calculate bounding box in image coordinates (convert normalized to pixels)
                     let xmin, ymin, xmax, ymax;
 
                     if (ann.ellipse) {
                         // Ellipse bounding box
-                        xmin = Math.round((ann.ellipse.center.x - ann.ellipse.radiusX) * scaleX);
-                        ymin = Math.round((ann.ellipse.center.y - ann.ellipse.radiusY) * scaleY);
-                        xmax = Math.round((ann.ellipse.center.x + ann.ellipse.radiusX) * scaleX);
-                        ymax = Math.round((ann.ellipse.center.y + ann.ellipse.radiusY) * scaleY);
+                        const centerX = ann.ellipse.center.x * imgWidth;
+                        const centerY = ann.ellipse.center.y * imgHeight;
+                        const radX = ann.ellipse.radiusX * imgWidth;
+                        const radY = ann.ellipse.radiusY * imgHeight;
+                        xmin = Math.round(centerX - radX);
+                        ymin = Math.round(centerY - radY);
+                        xmax = Math.round(centerX + radX);
+                        ymax = Math.round(centerY + radY);
                     } else if (ann.polygon && ann.polygon.length > 0) {
                         // Polygon bounding box
-                        const xs = ann.polygon.map(p => p.x * scaleX);
-                        const ys = ann.polygon.map(p => p.y * scaleY);
+                        const xs = ann.polygon.map(p => p.x * imgWidth);
+                        const ys = ann.polygon.map(p => p.y * imgHeight);
                         xmin = Math.round(Math.min(...xs));
                         ymin = Math.round(Math.min(...ys));
                         xmax = Math.round(Math.max(...xs));
                         ymax = Math.round(Math.max(...ys));
                     } else {
                         // Regular bounding box
-                        xmin = Math.round(ann.bbox.x * scaleX);
-                        ymin = Math.round(ann.bbox.y * scaleY);
-                        xmax = Math.round((ann.bbox.x + ann.bbox.width) * scaleX);
-                        ymax = Math.round((ann.bbox.y + ann.bbox.height) * scaleY);
+                        xmin = Math.round(ann.bbox.x * imgWidth);
+                        ymin = Math.round(ann.bbox.y * imgHeight);
+                        xmax = Math.round((ann.bbox.x + ann.bbox.width) * imgWidth);
+                        ymax = Math.round((ann.bbox.y + ann.bbox.height) * imgHeight);
                     }
 
                     // Ensure coordinates are within image bounds
@@ -3081,35 +3314,31 @@ async function exportAnnotations(format = 'yolo') {
 
                 const annotations = state.annotations[imageId];
                 const yoloLines = annotations.map(ann => {
-                    const scaleX = imgWidth / state.canvas.width;
-                    const scaleY = imgHeight / state.canvas.height;
-
+                    // Annotations are already stored in normalized [0-1] coordinates
                     if (ann.ellipse) {
                         // Ellipse - approximate as polygon for YOLO segmentation format
                         const numPoints = 32;
                         const points = [];
                         for (let i = 0; i < numPoints; i++) {
                             const angle = (i / numPoints) * 2 * Math.PI;
-                            const x = (ann.ellipse.center.x + Math.cos(angle) * ann.ellipse.radiusX) * scaleX;
-                            const y = (ann.ellipse.center.y + Math.sin(angle) * ann.ellipse.radiusY) * scaleY;
-                            const x_norm = x / imgWidth;
-                            const y_norm = y / imgHeight;
+                            const x_norm = ann.ellipse.center.x + Math.cos(angle) * ann.ellipse.radiusX;
+                            const y_norm = ann.ellipse.center.y + Math.sin(angle) * ann.ellipse.radiusY;
                             points.push(`${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`);
                         }
                         return `${ann.labelId} ${points.join(' ')}`;
                     } else if (ann.polygon && ann.polygon.length > 0) {
+                        // Polygon points are already normalized
                         const points = ann.polygon.map(p => {
-                            const x_norm = (p.x * scaleX) / imgWidth;
-                            const y_norm = (p.y * scaleY) / imgHeight;
-                            return `${x_norm.toFixed(6)} ${y_norm.toFixed(6)}`;
+                            return `${p.x.toFixed(6)} ${p.y.toFixed(6)}`;
                         }).join(' ');
 
                         return `${ann.labelId} ${points}`;
                     } else {
-                        const centerX = ((ann.bbox.x + ann.bbox.width / 2) * scaleX) / imgWidth;
-                        const centerY = ((ann.bbox.y + ann.bbox.height / 2) * scaleY) / imgHeight;
-                        const width = (ann.bbox.width * scaleX) / imgWidth;
-                        const height = (ann.bbox.height * scaleY) / imgHeight;
+                        // Bounding box in YOLO format (center_x, center_y, width, height) - already normalized
+                        const centerX = ann.bbox.x + ann.bbox.width / 2;
+                        const centerY = ann.bbox.y + ann.bbox.height / 2;
+                        const width = ann.bbox.width;
+                        const height = ann.bbox.height;
 
                         return `${ann.labelId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`;
                     }
@@ -3127,9 +3356,12 @@ async function exportAnnotations(format = 'yolo') {
             URL.revokeObjectURL(url);
         }
 
-        alert('✅ Annotations exported successfully!');
+        loading.hide();
+        showToast(`Annotations exported successfully (${format.toUpperCase()})!`, 'success');
     } catch (error) {
+        loading.hide();
         console.error('Export error:', error);
+        showToast('Export failed: ' + error.message, 'error');
         alert('Failed to export annotations: ' + error.message);
     }
 }

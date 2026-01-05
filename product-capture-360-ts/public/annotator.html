@@ -1128,8 +1128,14 @@
                         </span>
                         AI Detect
                     </button>
-                    <span class="ai-threshold-label" id="aiThresholdLabel" data-help="aiThreshold">conf: 0.85</span>
-                    <span class="ai-threshold-help" data-help="aiThreshold">?</span>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px;">
+                        <label for="aiConfidenceSlider" style="font-size: 12px; color: #94a3b8; white-space: nowrap;">Confidence:</label>
+                        <input type="range" id="aiConfidenceSlider" min="10" max="95" value="50" step="5"
+                               style="width: 100px; cursor: pointer;"
+                               oninput="updateAIConfidenceThreshold(this.value)"
+                               title="AI detection confidence threshold">
+                        <span id="aiThresholdLabel" style="font-size: 12px; color: #3b82f6; font-weight: 600; min-width: 45px;">0.50</span>
+                    </div>
                     <span class="ai-sam2-hint" id="sam2Hint">Use selected box</span>
                     <button class="btn btn-secondary btn-sm ai-sam2-draw" id="sam2DrawBox" type="button" onclick="switchToBoxTool()">Draw box</button>
                     <div class="spinner sam2-spinner" id="sam2Spinner"></div>
