@@ -214,6 +214,10 @@ export class CameraManager {
     return copy;
   };
 
+  getFrameTimestamp = (): number => {
+    return this.lastFrameTs;
+  };
+
   /**
    * Wait for the NEXT camera frame (different from current one)
    * Returns a fresh frame, ensuring video-like smoothness with no duplicates
@@ -230,8 +234,8 @@ export class CameraManager {
         this.latestFrame.copy(copy);
         return copy;
       }
-      // Small delay to avoid busy-waiting
-      await new Promise(resolve => setImmediate(resolve));
+      // Use 1ms delay instead of setImmediate to reduce CPU thrashing
+      await new Promise(resolve => setTimeout(resolve, 1));
     }
 
     // Timeout - return current frame if available

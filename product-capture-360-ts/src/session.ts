@@ -41,7 +41,7 @@ export class SessionManager {
     failureReasons: new Map(),
   };
   // Direct capture - no buffering for lightning-fast performance
-  private lastCapturedFrameHash?: string;
+  private lastCapturedFrameTs?: number;
   // Session log file for detailed tracking
   private sessionLogPath?: string;
   private sessionLog: any[] = [];
@@ -240,7 +240,7 @@ export class SessionManager {
 
     // Clear old session data immediately for lightning-fast new session start
     this.saveQueue.length = 0; // Clear save queue instantly
-    this.lastCapturedFrameHash = undefined;
+    this.lastCapturedFrameTs = undefined;
     this.captured = 0;
     this.ratePerMin = ratePerMin;
     this.durationSec = durationSec;
@@ -376,62 +376,35 @@ export class SessionManager {
         return;
       }
 
-// WAIT FOR NEXT FRAME - Ensures video-like smoothness with zero duplicates
-      // This waits for the camera to provide a NEW frame (different from the last one)
-      const buf = await this.camera.waitForNextFrame(100);
+// Capture current frame immediately - don't wait (camera runs at 30fps)
+      // At 160/min (2.67/sec = 375ms interval), there's plenty of time for new frames
+      const currentFrameTs = this.camera.getFrameTimestamp();
+      const buf = this.camera.getLatestJPEG();
 
       if (buf) {
         // CRITICAL: ALWAYS capture current camera frame - NEVER reuse old frames!
         // The product is rotating, so every frame must be captured as-is from camera
         const frameCopy = Buffer.from(buf);
 
-        // DEBUG: Log frame hash to verify we're getting different frames
-        const crypto = require('crypto');
-        const frameHash = crypto.createHash('md5').update(buf).digest('hex');
-        const isDuplicate = frameHash === this.lastCapturedFrameHash;
+        // Use camera timestamp for duplicate detection (much faster than MD5)
+        const isDuplicate = currentFrameTs === this.lastCapturedFrameTs;
 
         if (isDuplicate) {
           duplicateFrames++;
-          console.log(`⚠️  DUPLICATE FRAME #${framesQueued + 1}: Camera providing same frame! Hash: ${frameHash.substring(0, 8)}...`);
-
-          // 🚨 CODE RED: If we get 10+ consecutive duplicates, camera is STUCK
-          if (duplicateFrames >= 10 && (duplicateFrames === framesQueued)) {
-            const errorMsg = `🚨 CODE RED: CAMERA FROZEN! ${duplicateFrames} consecutive identical frames detected!\n` +
-                           `Frame hash: ${frameHash}\n` +
-                           `This is UNACCEPTABLE for 360° product capture.\n` +
-                           `ABORTING SESSION IMMEDIATELY.`;
-            console.error(errorMsg);
-
-            if (this.logger) {
-              this.logger.error({
-                event: 'camera_frozen_abort',
-                product: this.productName || 'unknown',
-                duplicate_count: duplicateFrames,
-                total_frames: framesQueued,
-                frame_hash: frameHash,
-              }, 'Camera stuck on single frame - session aborted');
-            }
-
-            this.writeSessionLog({
-              event: 'camera_frozen_abort',
-              duplicate_count: duplicateFrames,
-              total_frames: framesQueued,
-              frame_hash: frameHash,
-            });
-
-            isRunning = false;
-            this.stop();
-            throw new Error(`CAMERA FROZEN: All ${duplicateFrames} frames are identical! Camera is not updating. Check camera connection and restart.`);
+          // Skip duplicate frames - don't save them!
+          if (duplicateFrames < 5 || duplicateFrames % 20 === 0) {
+            console.log(`⚠️  DUPLICATE FRAME skipped (${duplicateFrames} total duplicates)`);
           }
         } else {
-          console.log(`✓ NEW FRAME #${framesQueued + 1}: Hash: ${frameHash.substring(0, 8)}... (size: ${buf.length} bytes)`);
+          // Only save unique frames
+          this.lastCapturedFrameTs = currentFrameTs;
+          this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
+          framesQueued++;
+
+          if (framesQueued % 50 === 0 || framesQueued < 10) {
+            console.log(`✓ NEW FRAME #${framesQueued} saved (size: ${buf.length} bytes)`);
+          }
         }
-
-        this.lastCapturedFrameHash = frameHash;
-
-        // ALWAYS save the frame (even if duplicate - maybe camera is slow to update)
-        this.saveQueue.push({ buffer: frameCopy, productName: this.productName });
-        framesQueued++;
       } else {
         // NO FRAME from camera - skip this capture cycle
         missedFrames++;
@@ -511,7 +484,7 @@ export class SessionManager {
     }
     this.timer = undefined;
     // Clear references when stopping
-    this.lastCapturedFrameHash = undefined;
+    this.lastCapturedFrameTs = undefined;
     return true;
   };
 
